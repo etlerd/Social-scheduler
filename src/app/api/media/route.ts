@@ -71,6 +71,7 @@ export const POST = route(async (req) => {
     duration,
     kind,
     created_at: Date.now(),
+    purged_at: null,
   };
   insertMedia(row);
   return Response.json({ media: toMediaItem(row) }, { status: 201 });

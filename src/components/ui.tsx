@@ -42,6 +42,13 @@ export function StatusBadge({ status }: { status: PostStatus | TargetStatus }) {
 }
 
 export function MediaThumb({ media, className = "", showMeta = true }: { media: MediaItem; className?: string; showMeta?: boolean }) {
+  if (media.purged) {
+    return (
+      <div className={`grid place-items-center bg-surface-2 text-muted text-[11px] leading-tight text-center p-2 ${className}`} title={media.originalName}>
+        {media.kind === "video" ? "Video" : "Photo"} deleted after publishing
+      </div>
+    );
+  }
   return (
     <div className={`relative overflow-hidden bg-surface-2 ${className}`}>
       {media.kind === "image" ? (

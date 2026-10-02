@@ -152,11 +152,13 @@ export function savePost(input: PostInput, existingId?: string, now = Date.now()
   const caption = String(input.caption ?? "");
   const media = getMediaRows(input.mediaIds);
   if (media.length !== input.mediaIds.length) throw new ApiError(400, "Some media no longer exists");
+  if (media.some((m) => m.purged_at != null)) throw new ApiError(400, "Some media was deleted after it was published. Remove it from the post and upload it again.");
   if (!input.targets.length && input.mode !== "draft") throw new ApiError(422, "Choose at least one account.");
 
   const seen = new Set<string>();
   const extraIds = input.targets.flatMap((t) => [t.options?.thumbnailMediaId, t.options?.coverMediaId]).filter((x): x is string => !!x);
   const extra = new Map(getMediaRows(extraIds).map((m) => [m.id, m]));
+  if ([...extra.values()].some((m) => m.purged_at != null)) throw new ApiError(400, "A thumbnail or cover was deleted after it was published. Choose another.");
   const lookup = (id: string) => extra.get(id);
   const scheduledAt = input.mode === "now" ? now : input.scheduledAt ?? null;
 

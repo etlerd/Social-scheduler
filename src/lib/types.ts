@@ -32,6 +32,8 @@ export interface MediaItem {
   duration: number | null;
   kind: "image" | "video";
   createdAt: number;
+  /** File was deleted from the server after publishing. */
+  purged: boolean;
 }
 
 export type YtPrivacy = "public" | "unlisted" | "private";

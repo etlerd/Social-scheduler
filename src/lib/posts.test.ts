@@ -75,3 +75,33 @@ describe("savePost", () => {
     expect(r.targets[0].attempts).toBe(0);
   });
 });
+
+describe("media cleanup after publishing", () => {
+  it("deletes files only when every post using them is done", async () => {
+    const { purgePublishedMedia, getMediaRow, mediaFilePath, listMedia } = await import("./media");
+    const fs = await import("node:fs");
+    const ig = addAccount("instagram");
+    const yt = addAccount("youtube");
+    const shared = addMedia(dir, { kind: "video" });
+    const thumb = addMedia(dir);
+    const libraryOnly = addMedia(dir);
+    const a = savePost({ caption: "", mediaIds: [shared.id], mode: "now", scheduledAt: null, targets: [{ accountId: ig, contentType: "ig_reel", options: {} }] });
+    const b = savePost({ caption: "", mediaIds: [shared.id], mode: "now", scheduledAt: null, targets: [{ accountId: yt, contentType: "yt_video", options: { title: "t", thumbnailMediaId: thumb.id } }] });
+
+    db().prepare("UPDATE post_targets SET status = 'published' WHERE post_id = ?").run(a.id);
+    expect(purgePublishedMedia(a.id)).toBe(0); // post b still needs the video
+    expect(fs.existsSync(mediaFilePath(shared))).toBe(true);
+
+    db().prepare("UPDATE post_targets SET status = 'failed' WHERE post_id = ?").run(b.id);
+    expect(purgePublishedMedia()).toBe(0); // failed posts keep media for retry
+
+    db().prepare("UPDATE post_targets SET status = 'platform_scheduled' WHERE post_id = ?").run(b.id);
+    expect(purgePublishedMedia()).toBe(2); // video + thumbnail
+    expect(fs.existsSync(mediaFilePath(shared))).toBe(false);
+    expect(getMediaRow(shared.id)!.purged_at).not.toBeNull();
+    expect(fs.existsSync(mediaFilePath(libraryOnly))).toBe(true);
+    expect(listMedia().map((m) => m.id)).toEqual([libraryOnly.id]);
+    expect(getPost(a.id)!.media[0].purged).toBe(true);
+    expect(() => savePost({ caption: "", mediaIds: [shared.id], mode: "draft", scheduledAt: null, targets: [] })).toThrow(/deleted after it was published/);
+  });
+});

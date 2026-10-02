@@ -18,6 +18,7 @@ One post can go to several accounts at once, each with its own content type and 
 - **Instagram** has no native scheduling API. The app's built-in worker publishes at the scheduled time, so **the server must be running then**.
 - **YouTube** public videos/Shorts scheduled 10+ minutes ahead upload immediately as private with `publishAt`; YouTube flips them public on time, even if this server is offline. Unlisted/private posts upload at the scheduled time. Live events are created right away.
 - Transient failures (network, 5xx, rate limits) retry 3 times with backoff. Instagram media containers and YouTube resumable upload sessions are saved, so a retry or a server restart resumes rather than double-posting. A restart during a non-resumable step marks the post failed with a "check before retrying" note instead of risking a duplicate.
+- Uploaded files are deleted from the server once every post that uses them has published (for YouTube, once the upload is handed to YouTube's scheduler). Files still needed by a draft, scheduled or failed post are kept, as are library uploads no post has used. Posts keep their history; duplicating one asks you to re-upload the media. Set `KEEP_PUBLISHED_MEDIA=true` to keep everything.
 - Expired or revoked tokens flag the account for reconnect. Instagram's 60-day tokens refresh automatically.
 
 ## Run it

@@ -15,6 +15,7 @@ export interface MediaRow {
   duration: number | null;
   kind: "image" | "video";
   created_at: number;
+  purged_at?: number | null;
 }
 
 export const EXT_BY_MIME: Record<string, string> = {
@@ -47,6 +48,7 @@ export function toMediaItem(r: MediaRow): MediaItem {
     duration: r.duration,
     kind: r.kind,
     createdAt: r.created_at,
+    purged: r.purged_at != null,
   };
 }
 
@@ -60,7 +62,7 @@ export function mediaFilePath(r: Pick<MediaRow, "file_name">): string {
 }
 
 export function listMedia(): MediaItem[] {
-  return (db().prepare("SELECT * FROM media ORDER BY created_at DESC").all() as MediaRow[]).map(toMediaItem);
+  return (db().prepare("SELECT * FROM media WHERE purged_at IS NULL ORDER BY created_at DESC").all() as MediaRow[]).map(toMediaItem);
 }
 
 export function getMediaRow(id: string): MediaRow | undefined {
@@ -68,7 +70,7 @@ export function getMediaRow(id: string): MediaRow | undefined {
 }
 
 export function getMediaRowByFile(fileName: string): MediaRow | undefined {
-  return db().prepare("SELECT * FROM media WHERE file_name = ?").get(fileName) as MediaRow | undefined;
+  return db().prepare("SELECT * FROM media WHERE file_name = ? AND purged_at IS NULL").get(fileName) as MediaRow | undefined;
 }
 
 export function getMediaRows(ids: string[]): MediaRow[] {
@@ -86,7 +88,7 @@ export function insertMedia(r: MediaRow) {
       `INSERT INTO media (id, file_name, original_name, mime, size, width, height, duration, kind, created_at)
        VALUES (@id, @file_name, @original_name, @mime, @size, @width, @height, @duration, @kind, @created_at)`,
     )
-    .run(r);
+    .run((({ purged_at: _, ...rest }) => rest)(r));
 }
 
 /** Posts that still need this media (not yet fully published). */
@@ -117,4 +119,40 @@ export function deleteMedia(id: string): boolean {
   })();
   fs.rm(mediaFilePath(row), { force: true }, () => {});
   return true;
+}
+
+/**
+ * Deletes the files of media whose every referencing post has finished publishing
+ * (published, or handed to YouTube's scheduler). Media used by a draft, scheduled,
+ * publishing or failed post is kept, and so is library media no post has used.
+ * The row stays (marked purged) so published posts keep their history.
+ */
+export function purgePublishedMedia(postId?: string): number {
+  const candidates = (
+    postId
+      ? db()
+          .prepare(
+            `SELECT media_id AS id FROM post_media WHERE post_id = ?
+             UNION SELECT json_extract(options, '$.thumbnailMediaId') FROM post_targets WHERE post_id = ?
+             UNION SELECT json_extract(options, '$.coverMediaId') FROM post_targets WHERE post_id = ?`,
+          )
+          .all(postId, postId, postId)
+      : db()
+          .prepare(
+            `SELECT media_id AS id FROM post_media
+             UNION SELECT json_extract(options, '$.thumbnailMediaId') FROM post_targets
+             UNION SELECT json_extract(options, '$.coverMediaId') FROM post_targets`,
+          )
+          .all()
+  ) as { id: string | null }[];
+  let n = 0;
+  for (const { id } of candidates) {
+    if (!id) continue;
+    const row = getMediaRow(id);
+    if (!row || row.purged_at != null || mediaInUse(id) > 0) continue;
+    fs.rmSync(mediaFilePath(row), { force: true });
+    db().prepare("UPDATE media SET purged_at = ? WHERE id = ?").run(Date.now(), id);
+    n++;
+  }
+  return n;
 }

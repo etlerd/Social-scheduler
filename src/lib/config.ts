@@ -36,6 +36,10 @@ export const config = {
   get demoAccounts() {
     return process.env.ENABLE_DEMO_ACCOUNTS === "true";
   },
+  /** Delete uploaded files once every post using them has gone out. */
+  get keepPublishedMedia() {
+    return process.env.KEEP_PUBLISHED_MEDIA === "true";
+  },
   get cronSecret() {
     return process.env.CRON_SECRET || "";
   },

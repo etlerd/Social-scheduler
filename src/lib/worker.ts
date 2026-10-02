@@ -2,7 +2,8 @@
 // failures with backoff. Started from src/instrumentation.ts.
 import { db } from "./db";
 import { flagReconnect, getAccountRow, listAccountRows } from "./accounts";
-import { getMediaRow } from "./media";
+import { getMediaRow, purgePublishedMedia } from "./media";
+import { config } from "./config";
 import { addEvent, getPostRow, getTargetRow, postMediaRows } from "./posts";
 import { PublishError, errorMessage } from "./errors";
 import { publishTarget } from "./providers";
@@ -47,6 +48,14 @@ export async function processTarget(id: string, deps: { sleep?: (ms: number) => 
       `UPDATE post_targets SET status = ?, external_id = ?, external_url = ?, error = NULL, published_at = ?, updated_at = ? WHERE id = ?`,
     ).run(result.status, result.externalId ?? null, result.externalUrl ?? null, Date.now(), Date.now(), id);
     log("info", result.status === "platform_scheduled" ? "Handed off; the platform will publish at the scheduled time." : "Published.");
+    if (!config.keepPublishedMedia) {
+      try {
+        const n = purgePublishedMedia(post.id);
+        if (n) log("info", `Deleted ${n} media file${n > 1 ? "s" : ""} from the server; no pending post needs ${n > 1 ? "them" : "it"}.`);
+      } catch (e) {
+        console.error("[worker] media cleanup failed", e);
+      }
+    }
   } catch (e) {
     const pe = e instanceof PublishError ? e : new PublishError(errorMessage(e), { retryable: false });
     if (pe.reconnect) flagReconnect(account.id, pe.message);
@@ -126,6 +135,15 @@ async function refreshTokens() {
   }
 }
 
+let lastSweep = 0;
+/** Catches files freed later, e.g. when a failed post sharing the media is deleted or succeeds on retry. */
+function sweepMedia() {
+  if (config.keepPublishedMedia || Date.now() - lastSweep < 3600_000) return;
+  lastSweep = Date.now();
+  const n = purgePublishedMedia();
+  if (n) console.log(`[worker] deleted ${n} published media file(s)`);
+}
+
 export function startWorker() {
   if (g.__ssWorker) return;
   recoverInterrupted();
@@ -133,6 +151,7 @@ export function startWorker() {
     try {
       runDue();
       void refreshTokens();
+      sweepMedia();
     } catch (e) {
       console.error("[worker] tick failed", e);
     }

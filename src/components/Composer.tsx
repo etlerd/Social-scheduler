@@ -63,6 +63,7 @@ export function Composer({ editId, duplicateId, date }: { editId?: string; dupli
   const [loading, setLoading] = useState(!!(editId || duplicateId));
   const [locked, setLocked] = useState(false);
   const [dragOver, setDragOver] = useState(false);
+  const [notice, setNotice] = useState("");
   const dirty = useRef(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -79,7 +80,9 @@ export function Composer({ editId, duplicateId, date }: { editId?: string; dupli
     api<{ post: Post }>(`/api/posts/${src}`)
       .then(({ post }) => {
         setCaption(post.caption);
-        setMedia(post.media);
+        const gone = post.media.filter((m) => m.purged).length;
+        setMedia(post.media.filter((m) => !m.purged));
+        if (gone) setNotice(`${gone} media file${gone > 1 ? "s were" : " was"} deleted after publishing. Upload ${gone > 1 ? "them" : "it"} again if you want ${gone > 1 ? "them" : "it"} in this post.`);
         setTargets(Object.fromEntries(post.targets.filter((t) => t.account).map((t) => [t.accountId, { contentType: t.contentType, options: t.options, touched: true }])));
         if (editId) {
           if (!post.editable) setLocked(true);
@@ -243,6 +246,7 @@ export function Composer({ editId, duplicateId, date }: { editId?: string; dupli
           </button>
         )}
       />
+      {notice && <div className="mb-4"><Banner>{notice}</Banner></div>}
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_340px]">
         <div className="space-y-5 min-w-0">
           {/* Accounts */}

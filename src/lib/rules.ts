@@ -196,7 +196,7 @@ export function validateTarget(input: ValidateInput): Issue[] {
       }
       if (o.coverMediaId) {
         const c = lookup(o.coverMediaId);
-        if (!c) out.push({ level: "error", message: "Cover image not found." });
+        if (!c) out.push({ level: "error", message: "Cover image no longer exists (deleted after publishing?). Choose another." });
         else igImageIssues(c, out, "Cover", false);
       }
       break;
@@ -219,7 +219,7 @@ export function validateTarget(input: ValidateInput): Issue[] {
       if (o.tags && tagsLength(o.tags) > 500) out.push({ level: "error", message: "Tags exceed YouTube's 500-character total." });
       if (o.thumbnailMediaId) {
         const t = lookup(o.thumbnailMediaId);
-        if (!t) out.push({ level: "error", message: "Thumbnail not found." });
+        if (!t) out.push({ level: "error", message: "Thumbnail no longer exists (deleted after publishing?). Choose another." });
         else {
           if (!["image/jpeg", "image/png"].includes(t.mime)) out.push({ level: "error", message: "Thumbnail must be JPEG or PNG." });
           if (t.size > 2 * MB) out.push({ level: "error", message: "Thumbnail exceeds YouTube's 2 MB limit." });
