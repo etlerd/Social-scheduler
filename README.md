@@ -60,6 +60,10 @@ Things that will bite:
 - Custom thumbnails require a phone-verified channel. Live events require live streaming enabled on the channel.
 - In "Testing" mode, Google refresh tokens expire after 7 days. Publish the consent screen to avoid weekly reconnects.
 
+## Storage
+
+Everything lives in `DATA_DIR`. Set `STORAGE_LIMIT_GB` to your volume size (default 5, Railway Hobby's cap). The sidebar meter and the Media page show usage split by what keeps each file: posts waiting to publish, failed posts (kept for retry), library files no post uses, and app data. From 80% a banner appears; uploads that won't fit are refused before they're sent; at the limit, uploads pause but scheduled posts still publish. Media → Storage can delete unused files; files any unpublished post needs are never deleted.
+
 ## Deploy
 
 Needs a host with a **persistent process and persistent disk** (SQLite database and media files live in `DATA_DIR`): a VPS, Fly.io with a volume, Railway, Render with a disk, a home server behind a tunnel. Serverless platforms (Vercel, Netlify) don't fit: no persistent disk, no long-running worker.
