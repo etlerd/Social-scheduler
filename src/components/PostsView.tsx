@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
+import { isPendingDelete, onPendingDeletesChange } from "./toast";
 import Link from "next/link";
 import { api } from "@/lib/client";
 import type { Post } from "@/lib/types";
@@ -34,17 +35,21 @@ export function PostsView() {
     return () => clearInterval(t);
   }, []);
 
-  const counts = useMemo(() => Object.fromEntries(TABS.map((t) => [t.key, (posts ?? []).filter(t.match).length])), [posts]);
+  const [, bump] = useState(0);
+  useEffect(() => onPendingDeletesChange(() => bump((n) => n + 1)), []);
+  const visible = (posts ?? []).filter((p) => !isPendingDelete(p.id));
+  const counts = Object.fromEntries(TABS.map((t) => [t.key, visible.filter(t.match).length]));
 
   const shown = useMemo(() => {
     const t = TABS.find((x) => x.key === tab)!;
     const needle = q.trim().toLowerCase();
-    const list = (posts ?? []).filter(t.match).filter((p) =>
+    const list = visible.filter(t.match).filter((p) =>
       !needle || p.caption.toLowerCase().includes(needle) || p.targets.some((x) => (x.options.title || "").toLowerCase().includes(needle)),
     );
     const key = (p: Post) => p.scheduledAt ?? p.updatedAt;
     return tab === "upcoming" ? list.sort((a, b) => key(a) - key(b)) : list.sort((a, b) => key(b) - key(a));
-  }, [posts, tab, q]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [posts, tab, q, visible.length]);
 
   return (
     <div>

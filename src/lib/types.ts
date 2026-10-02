@@ -41,6 +41,8 @@ export interface MediaItem {
 export type YtPrivacy = "public" | "unlisted" | "private";
 
 export interface TargetOptions {
+  /** Caption for this account only; when unset the post's shared caption is used. */
+  caption?: string;
   // Instagram
   firstComment?: string;
   shareToFeed?: boolean;

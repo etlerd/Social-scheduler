@@ -89,8 +89,13 @@ export function countMentions(text: string): number {
   return (text.match(/(^|\s)@[\w.]+/g) || []).length;
 }
 
+/** The caption a destination actually publishes: its own override, or the post's shared caption. */
+export function captionFor(shared: string, o: TargetOptions): string {
+  return o.caption ?? shared;
+}
+
 export function ytDescription(caption: string, o: TargetOptions): string {
-  return o.useCaption !== false ? caption : o.description || "";
+  return o.useCaption !== false ? captionFor(caption, o) : o.description || "";
 }
 
 function ratio(m: MediaLike): number | null {
@@ -154,7 +159,8 @@ export function mediaProblems(ct: ContentType, media: MediaLike[]): string[] {
 }
 
 export function validateTarget(input: ValidateInput): Issue[] {
-  const { contentType: ct, options: o, caption, media, lookup, mode } = input;
+  const { contentType: ct, options: o, media, lookup, mode } = input;
+  const caption = captionFor(input.caption, o);
   const now = input.now ?? Date.now();
   const out: Issue[] = [];
   const used = mediaForTarget(ct, media);

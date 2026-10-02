@@ -48,6 +48,22 @@ describe("instagram publishing", () => {
     expect(calls.some((c) => c.url.endsWith("/m1/comments"))).toBe(true);
   });
 
+  it("uses an account's own caption when it has one", async () => {
+    const acct = addAccount("instagram");
+    const igId = getAccountRow(acct)!.external_id;
+    const m = addMedia(dir);
+    const post = savePost({ caption: "shared", mediaIds: [m.id], mode: "now", scheduledAt: null, targets: [{ accountId: acct, contentType: "ig_image", options: { caption: "just for IG #tag" } }] });
+    const { fn, calls } = mockFetch([
+      [`POST ${G}/${igId}/media`, () => json({ id: "c1" })],
+      [`GET ${G}/c1`, () => json({ status_code: "FINISHED" })],
+      [`POST ${G}/${igId}/media_publish`, () => json({ id: "m1" })],
+      [`GET ${G}/m1`, () => json({ permalink: "x" })],
+    ]);
+    vi.stubGlobal("fetch", fn);
+    await processTarget(claim(post.id)[0], { sleep: noSleep });
+    expect((calls[0].body as Record<string, string>).caption).toBe("just for IG #tag");
+  });
+
   it("publishes a carousel with child containers", async () => {
     const acct = addAccount("instagram");
     const igId = getAccountRow(acct)!.external_id;

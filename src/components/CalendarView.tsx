@@ -10,6 +10,7 @@ import { PageHeader } from "./AppShell";
 import { IconChevron, IconPlus, PlatformIcon } from "./icons";
 import { MediaThumb, Spinner, StatusBadge } from "./ui";
 import { platformsOf, postLabel, targetLabel } from "./postUtil";
+import { isPendingDelete, onPendingDeletesChange } from "./toast";
 
 function firstDayOfWeek(): number {
   try {
@@ -83,7 +84,7 @@ function AgendaList() {
     const load = () => {
       const d = new Date();
       const from = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
-      api<{ posts: Post[] }>(`/api/posts?from=${from}&to=${from + 60 * 86400_000}`).then((r) => setPosts(r.posts)).catch(() => {});
+      api<{ posts: Post[] }>(`/api/posts?from=${from}&to=${from + 60 * 86400_000}`).then((r) => setPosts(r.posts.filter((p) => !isPendingDelete(p.id)))).catch(() => {});
     };
     load();
     const t = setInterval(load, 20000);
@@ -179,7 +180,7 @@ export function CalendarView() {
     const to = new Date(days[41].getFullYear(), days[41].getMonth(), days[41].getDate() + 1).getTime();
     try {
       const r = await api<{ posts: Post[] }>(`/api/posts?from=${from}&to=${to}`);
-      setPosts(r.posts);
+      setPosts(r.posts.filter((p) => !isPendingDelete(p.id)));
     } catch (e) {
       setError((e as Error).message);
     }
@@ -188,7 +189,7 @@ export function CalendarView() {
   const loadOverview = useCallback(async () => {
     try {
       const now = Date.now();
-      const { posts: all } = await api<{ posts: Post[] }>("/api/posts");
+      const all = (await api<{ posts: Post[] }>("/api/posts")).posts.filter((p) => !isPendingDelete(p.id));
       const upcoming = all.filter((p) => p.scheduledAt != null && p.scheduledAt > now && (p.status === "scheduled" || p.status === "publishing")).sort((a, b) => a.scheduledAt! - b.scheduledAt!);
       const [{ accounts }, { media }] = await Promise.all([
         api<{ accounts: unknown[] }>("/api/accounts"),
@@ -203,6 +204,8 @@ export function CalendarView() {
       });
     } catch {}
   }, []);
+
+  useEffect(() => onPendingDeletesChange(() => { load(); loadOverview(); }), [load, loadOverview]);
 
   useEffect(() => {
     load();

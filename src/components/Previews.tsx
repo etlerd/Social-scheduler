@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { mediaForTarget, ytDescription } from "@/lib/rules";
+import { captionFor, mediaForTarget, ytDescription } from "@/lib/rules";
 import type { AccountSummary, ContentType, MediaItem, TargetOptions } from "@/lib/types";
 import { fmtDateTime } from "@/lib/format";
 import { AccountAvatar } from "./ui";
@@ -40,7 +40,8 @@ interface Props {
   scheduledAt: number | null;
 }
 
-export function TargetPreview(p: Props) {
+export function TargetPreview(props: Props) {
+  const p = { ...props, caption: props.contentType.startsWith("ig_") ? captionFor(props.caption, props.options) : props.caption };
   const used = mediaForTarget(p.contentType, p.media);
   const handle = p.account.username?.replace(/^@/, "") || p.account.name;
   const [idx, setIdx] = useState(0);

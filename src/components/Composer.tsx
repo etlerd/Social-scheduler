@@ -47,7 +47,26 @@ function defaultWhen(date?: string): string {
   return toLocalInput(t.getTime());
 }
 
-function quickTimes(now = new Date()): { label: string; ms: number }[] {
+interface SavedDraft {
+  caption: string;
+  mediaIds: string[];
+  targets: Record<string, TargetState>;
+  mode: Mode;
+  when: string;
+  savedAt: number;
+}
+
+function relativeAgo(ms: number): string {
+  const m = Math.round((Date.now() - ms) / 60_000);
+  if (m < 1) return "just now";
+  if (m < 60) return `${m} min ago`;
+  const h = Math.round(m / 60);
+  if (h < 24) return `${h} hour${h > 1 ? "s" : ""} ago`;
+  const d = Math.round(h / 24);
+  return `${d} day${d > 1 ? "s" : ""} ago`;
+}
+
+export function quickTimes(now = new Date()): { label: string; ms: number }[] {
   const y = now.getFullYear(), m = now.getMonth(), d = now.getDate();
   const daysToMon = ((8 - now.getDay()) % 7) || 7;
   return [
@@ -81,6 +100,7 @@ export function Composer({ editId, duplicateId, date, mediaParam }: { editId?: s
   const [locked, setLocked] = useState(false);
   const [dragOver, setDragOver] = useState(false);
   const [notice, setNotice] = useState("");
+  const [libReady, setLibReady] = useState(false);
   const dirty = useRef(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -93,6 +113,7 @@ export function Composer({ editId, duplicateId, date, mediaParam }: { editId?: s
     api<{ media: MediaItem[] }>("/api/media")
       .then((r) => {
         setLibrary(r.media);
+        setLibReady(true);
         // Opened from the library with files preselected.
         if (mediaParam && !editId && !duplicateId) {
           const ids = mediaParam.split(",");
@@ -138,7 +159,44 @@ export function Composer({ editId, duplicateId, date, mediaParam }: { editId?: s
     },
     [addToLibrary],
   );
+
+  // Autosave: navigating away inside the app doesn't trigger beforeunload, so keep a local copy.
+  const draftKey = `composer:${editId ?? "new"}`;
+  const [restorable, setRestorable] = useState<SavedDraft | null>(null);
+  useEffect(() => {
+    if (duplicateId || mediaParam) return;
+    try {
+      const raw = localStorage.getItem(draftKey);
+      const d = raw ? (JSON.parse(raw) as SavedDraft) : null;
+      if (d && Date.now() - d.savedAt < 7 * 86400_000) setRestorable(d);
+    } catch {}
+  }, [draftKey, duplicateId, mediaParam]);
+  useEffect(() => {
+    if (!dirty.current) return;
+    const t = setTimeout(() => {
+      try {
+        localStorage.setItem(draftKey, JSON.stringify({ caption, mediaIds: media.map((m) => m.id), targets, mode, when, savedAt: Date.now() } satisfies SavedDraft));
+      } catch {}
+    }, 600);
+    return () => clearTimeout(t);
+  }, [caption, media, targets, mode, when, draftKey]);
+  const clearSaved = () => {
+    try {
+      localStorage.removeItem(draftKey);
+    } catch {}
+  };
+  const restore = (d: SavedDraft) => {
+    setCaption(d.caption);
+    setMedia(d.mediaIds.map((id) => library.find((m) => m.id === id)).filter((m): m is MediaItem => !!m));
+    setTargets(Object.fromEntries(Object.entries(d.targets).filter(([id]) => accounts?.some((a) => a.id === id))));
+    setMode(d.mode);
+    setWhen(d.when);
+    setRestorable(null);
+    dirty.current = true;
+  };
   const { jobs, upload, dismiss } = useUploader(onUploaded);
+  const uploading = jobs.filter((j) => !j.error);
+  const uploadPct = uploading.length ? Math.round((uploading.reduce((n, j) => n + j.progress, 0) / uploading.length) * 100) : 0;
 
   // Re-infer content types the user hasn't explicitly chosen when media changes.
   useEffect(() => {
@@ -199,6 +257,21 @@ export function Composer({ editId, duplicateId, date, mediaParam }: { editId?: s
     if (id) document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
   };
   const selected = (accounts ?? []).filter((a) => targets[a.id]);
+  const ownCaption = selected.filter((a) => targets[a.id].options.caption !== undefined).length;
+  const isMac = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform);
+  const canSubmit = !busy && selected.length > 0 && errorCount === 0 && uploading.length === 0;
+  const submitRef = useRef<() => void>(() => {});
+  submitRef.current = () => canSubmit && submit(false);
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+        e.preventDefault();
+        submitRef.current();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   const toggleAccount = (a: AccountSummary) => {
     touch();
@@ -246,6 +319,7 @@ export function Composer({ editId, duplicateId, date, mediaParam }: { editId?: s
     try {
       const r = await api<{ post: Post }>(editId ? `/api/posts/${editId}` : "/api/posts", { method: editId ? "PUT" : "POST", json: body });
       dirty.current = false;
+      clearSaved();
       toast(asDraft ? "Draft saved" : mode === "now" ? "Publishing now" : `Scheduled for ${fmtDateTime(r.post.scheduledAt!)}`);
       router.push(`/posts/${r.post.id}`);
     } catch (e) {
@@ -303,6 +377,16 @@ export function Composer({ editId, duplicateId, date, mediaParam }: { editId?: s
         )}
       />
       {notice && <div className="mb-4"><Banner>{notice}</Banner></div>}
+      {restorable && (
+        <div className="mb-4 card p-3 flex flex-wrap items-center gap-2 border-accent/40 bg-accent/5">
+          <span className="text-sm flex-1 min-w-48">
+            You have unsaved work from {relativeAgo(restorable.savedAt)}
+            {restorable.caption ? <span className="text-muted">: &ldquo;{restorable.caption.slice(0, 50)}{restorable.caption.length > 50 ? "…" : ""}&rdquo;</span> : null}
+          </span>
+          <button className="btn-ghost btn-sm" onClick={() => { clearSaved(); setRestorable(null); }}>Discard</button>
+          <button className="btn-primary btn-sm" disabled={!libReady} onClick={() => restore(restorable)}>Restore</button>
+        </div>
+      )}
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_340px]">
         <div className="space-y-5 min-w-0">
           {/* Accounts */}
@@ -382,6 +466,7 @@ export function Composer({ editId, duplicateId, date, mediaParam }: { editId?: s
               onChange={(e) => { touch(); setCaption(e.target.value); }}
             />
             <div className="flex justify-end gap-3 text-xs text-muted mt-1.5">
+              {ownCaption > 0 && <span className="mr-auto">{ownCaption} account{ownCaption > 1 ? "s use their" : " uses its"} own caption</span>}
               <span className={countHashtags(caption) > 30 ? "text-bad" : ""}>#{countHashtags(caption)}/30</span>
               <span className={caption.length > 2200 ? "text-bad" : ""}>{caption.length}/2200</span>
             </div>
@@ -450,6 +535,7 @@ export function Composer({ editId, duplicateId, date, mediaParam }: { editId?: s
               media={media}
               onType={(ct) => setTarget(a.id, { contentType: ct, touched: true, options: { ...defaultOptions(ct), ...targets[a.id].options } })}
               onOpt={(p) => setOpt(a.id, p)}
+              sharedCaption={caption}
             />
           ))}
 
@@ -458,7 +544,9 @@ export function Composer({ editId, duplicateId, date, mediaParam }: { editId?: s
 
           <div className="sticky bottom-20 md:bottom-4 z-30 card p-3 flex items-center gap-2 shadow-lg">
             <span className="text-xs text-muted flex-1 min-w-0 truncate">
-              {selected.length === 0 ? (
+              {uploading.length > 0 ? (
+                <span>Uploading {uploading.length} file{uploading.length > 1 ? "s" : ""}… {uploadPct}%</span>
+              ) : selected.length === 0 ? (
                 "Pick at least one account"
               ) : errorCount ? (
                 <button className="text-bad underline underline-offset-2" onClick={jumpToFirstError}>
@@ -474,10 +562,10 @@ export function Composer({ editId, duplicateId, date, mediaParam }: { editId?: s
                 "Pick a time"
               )}
             </span>
-            <button className="btn-ghost" disabled={!!busy} onClick={() => submit(true)}>
+            <button className="btn-ghost" disabled={!!busy || uploading.length > 0} onClick={() => submit(true)}>
               {busy === "draft" && <Spinner />} Save draft
             </button>
-            <button className="btn-primary" disabled={!!busy || selected.length === 0 || errorCount > 0} onClick={() => submit(false)}>
+            <button className="btn-primary" disabled={!canSubmit} onClick={() => submit(false)} title={`${mode === "now" ? "Publish" : "Schedule"} (${isMac ? "⌘" : "Ctrl"}+Enter)`}>
               {busy === "submit" && <Spinner />} {mode === "now" ? "Publish" : "Schedule"}
             </button>
           </div>
@@ -514,6 +602,7 @@ function TargetPanel({
   lookup,
   scheduledAt,
   media,
+  sharedCaption,
   onType,
   onOpt,
 }: {
@@ -525,6 +614,7 @@ function TargetPanel({
   lookup: (id: string) => MediaItem | undefined;
   scheduledAt: number | null;
   media: MediaItem[];
+  sharedCaption: string;
   onType: (ct: ContentType) => void;
   onOpt: (p: Partial<TargetOptions>) => void;
 }) {
@@ -616,6 +706,25 @@ function TargetPanel({
               </div>
             </div>
           </>
+        )}
+        {!yt && ct !== "ig_story" && (
+          o.caption === undefined ? (
+            <button className="text-sm text-accent text-left" onClick={() => onOpt({ caption: sharedCaption })}>
+              Write a different caption for this account
+            </button>
+          ) : (
+            <div>
+              <div className="flex items-center justify-between mb-1.5">
+                <label className="label mb-0" htmlFor={`cap-${a.id}`}>Caption for this account</label>
+                <button className="text-xs text-accent" onClick={() => onOpt({ caption: undefined })}>Use shared caption</button>
+              </div>
+              <textarea id={`cap-${a.id}`} className="input min-h-24" value={o.caption} onChange={(e) => onOpt({ caption: e.target.value })} />
+              <div className="flex justify-end gap-3 text-xs text-muted mt-1">
+                <span className={countHashtags(o.caption) > 30 ? "text-bad" : ""}>#{countHashtags(o.caption)}/30</span>
+                <span className={o.caption.length > 2200 ? "text-bad" : ""}>{o.caption.length}/2200</span>
+              </div>
+            </div>
+          )
         )}
         {!yt && ct !== "ig_story" && (
           <div>

@@ -3,7 +3,7 @@
 import fs from "node:fs";
 import { PublishError } from "../errors";
 import { mediaFilePath } from "../media";
-import { mediaForTarget } from "../rules";
+import { captionFor, mediaForTarget } from "../rules";
 import { randomId } from "../crypto";
 import type { PublishContext, PublishResult } from "./types";
 
@@ -14,7 +14,7 @@ export async function demoPublish(ctx: PublishContext): Promise<PublishResult> {
   }
   ctx.log("info", `[demo] Simulating ${ct} publish.`);
   await ctx.sleep(1500);
-  if (/(^|\s)#fail\b/i.test(ctx.post.caption)) {
+  if (/(^|\s)#fail\b/i.test(captionFor(ctx.post.caption, ctx.options))) {
     throw new PublishError("[demo] Simulated platform error (caption contains #fail).");
   }
   const id = randomId(8);

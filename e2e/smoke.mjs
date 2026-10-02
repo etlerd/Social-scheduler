@@ -106,12 +106,45 @@ try {
   await page.waitForURL(/\/posts\/[\w-]+$/);
   await page.locator("p.text-bad", { hasText: "Simulated platform error" }).waitFor({ timeout: 30000 });
   await page.getByText("Retry failed").waitFor();
+  await page.locator(".bg-bad\\/8 >> text=Retry").first().waitFor();
+
+  step("delete with undo");
+  await page.click("button:text-is('Delete')");
+  await page.waitForURL(/\/posts$/);
+  await page.click("button:has-text('All')");
+  if (await page.getByText("this one breaks").count()) throw new Error("pending delete still listed");
+  await page.click("[role=status] >> text=Undo");
+  await page.getByText("this one breaks").waitFor();
+
+  step("composer autosave survives in-app navigation; own caption per account");
+  await page.goto(`${BASE}/compose`);
+  await page.fill("#caption", "Half-written idea about pasta");
+  await page.locator("button[aria-pressed]", { hasText: "Demo IG" }).click();
+  await page.click("text=Write a different caption for this account");
+  await page.locator("textarea[id^=cap-]").fill("IG-only caption #pasta");
+  await page.waitForTimeout(900);
+  await page.click(".hidden.md\\:flex >> text=Posts");
+  await page.waitForURL(/\/posts$/);
+  await page.click(".hidden.md\\:flex >> text=New post");
+  await page.getByText(/You have unsaved work/).waitFor();
+  await page.click("button:text-is('Restore')");
+  if ((await page.inputValue("#caption")) !== "Half-written idea about pasta") throw new Error("caption not restored");
+  if ((await page.inputValue("textarea[id^=cap-]")) !== "IG-only caption #pasta") throw new Error("own caption not restored");
+  await page.getByText("1 account uses its own caption").waitFor();
 
   step("calendar + posts list");
   await page.goto(`${BASE}/`);
   if (tomorrow.getMonth() !== new Date().getMonth()) await page.click("[aria-label='Next month']");
   await page.getByText("Two looks, one day").first().waitFor();
   await shot(page, "desktop-calendar");
+  step("move a scheduled post from its page");
+  await page.locator("a", { hasText: "Two looks, one day" }).first().click();
+  await page.waitForURL(/\/posts\/[\w-]+$/);
+  await page.click("button:text-is('Move')");
+  await page.locator("button.chip", { hasText: /^Mon / }).click();
+  await page.click("button.btn-primary:text-is('Save')");
+  await page.locator("[role=status]", { hasText: "Moved to" }).waitFor();
+  await page.goto(`${BASE}/`);
   step("list view, library multi-select, quick time picks");
   await page.click(".seg >> text=List");
   await page.getByRole("heading", { name: "Upcoming" }).waitFor();

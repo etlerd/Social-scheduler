@@ -44,6 +44,11 @@ describe("instagram rules", () => {
   });
 });
 
+it("validates an account's own caption instead of the shared one", () => {
+  expect(errors(v("ig_image", [img()], { caption: "a".repeat(2201) }, "short"))[0]).toMatch(/2,200/);
+  expect(errors(v("ig_image", [img()], { caption: "fine" }, "a".repeat(2201)))).toEqual([]);
+});
+
 describe("youtube rules", () => {
   it("requires a title and a video", () => {
     expect(errors(v("yt_video", []))).toEqual(expect.arrayContaining(["YouTube needs a title.", "Add a video."]));
