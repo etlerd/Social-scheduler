@@ -1,0 +1,75 @@
+@import "tailwindcss";
+
+@theme {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-line: var(--line);
+  --color-ink: var(--ink);
+  --color-muted: var(--muted);
+  --color-accent: var(--accent);
+  --color-accent-ink: var(--accent-ink);
+  --color-ig: #d62976;
+  --color-yt: #ff0033;
+  --color-ok: var(--ok);
+  --color-warn: var(--warn);
+  --color-bad: var(--bad);
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+}
+
+:root {
+  --bg: #f6f6f4;
+  --surface: #ffffff;
+  --surface-2: #f0f0ed;
+  --line: #e4e4e0;
+  --ink: #18181b;
+  --muted: #6b6b70;
+  --accent: #2b59ff;
+  --accent-ink: #ffffff;
+  --ok: #16a34a;
+  --warn: #b45309;
+  --bad: #dc2626;
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0f0f11;
+    --surface: #18181b;
+    --surface-2: #222226;
+    --line: #2e2e33;
+    --ink: #f4f4f5;
+    --muted: #a1a1aa;
+    --accent: #6d8bff;
+    --accent-ink: #0b0b0d;
+    --ok: #4ade80;
+    --warn: #fbbf24;
+    --bad: #f87171;
+    color-scheme: dark;
+  }
+}
+
+html, body { background: var(--bg); color: var(--ink); }
+body { -webkit-tap-highlight-color: transparent; }
+
+@utility card { @apply rounded-2xl border border-line bg-surface; }
+@utility btn { @apply inline-flex items-center justify-center gap-2 rounded-xl px-4 h-10 text-sm font-medium transition select-none disabled:opacity-50 disabled:pointer-events-none; }
+@utility btn-primary { @apply btn bg-accent text-accent-ink hover:brightness-110 active:brightness-95; }
+@utility btn-ghost { @apply btn border border-line bg-surface hover:bg-surface-2; }
+@utility btn-danger { @apply btn border border-line bg-surface text-bad hover:bg-surface-2; }
+@utility btn-sm { @apply h-8 px-3 text-xs rounded-lg; }
+@utility input {
+  @apply w-full rounded-xl border border-line bg-surface px-3 h-10 text-sm outline-none focus:border-accent focus:ring-2 focus:ring-accent/20;
+  &:is(textarea) { @apply h-auto py-2.5 leading-relaxed; }
+}
+@utility label { @apply block text-xs font-medium text-muted mb-1.5; }
+@utility chip { @apply inline-flex items-center gap-1.5 rounded-full px-2.5 h-6 text-xs font-medium; }
+@utility seg {
+  @apply inline-flex rounded-xl bg-surface-2 p-1 gap-1;
+  & > button { @apply rounded-lg px-3 h-8 text-sm text-muted transition whitespace-nowrap; }
+  & > button[aria-pressed="true"] { @apply bg-surface text-ink shadow-sm; }
+}
+
+.safe-bottom { padding-bottom: env(safe-area-inset-bottom); }
+.no-scrollbar::-webkit-scrollbar { display: none; }
+.no-scrollbar { scrollbar-width: none; }
