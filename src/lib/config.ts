@@ -40,6 +40,14 @@ export const config = {
   get keepPublishedMedia() {
     return process.env.KEEP_PUBLISHED_MEDIA === "true";
   },
+  /** Disk budget for DATA_DIR (Railway Hobby volumes are 5 GB). */
+  get storageLimitBytes() {
+    return Number(process.env.STORAGE_LIMIT_GB || 5) * 1024 ** 3;
+  },
+  /** Warn at this share of the limit. */
+  get storageWarnRatio() {
+    return Number(process.env.STORAGE_WARN_PERCENT || 80) / 100;
+  },
   get cronSecret() {
     return process.env.CRON_SECRET || "";
   },

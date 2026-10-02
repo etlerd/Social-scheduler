@@ -10,6 +10,8 @@ import { IconTrash, IconUpload } from "./icons";
 import { UploadJobs } from "./MediaPicker";
 import { Banner, Empty, MediaThumb, Sheet, Spinner } from "./ui";
 import { useUploader } from "./upload";
+import { StoragePanel } from "./StoragePanel";
+import { storageChanged } from "./storage";
 
 export function MediaLibrary() {
   const [items, setItems] = useState<MediaItem[] | null>(null);
@@ -23,8 +25,12 @@ export function MediaLibrary() {
   const [sel, setSel] = useState<string[]>([]);
   const { jobs, upload, dismiss } = useUploader(useCallback((m: MediaItem) => setItems((xs) => [m, ...(xs ?? [])]), []));
 
+  const [sort, setSort] = useState<"newest" | "largest">("newest");
   useEffect(() => {
-    api<{ media: MediaItem[] }>("/api/media").then((r) => setItems(r.media)).catch((e) => setError(e.message));
+    const load = () => api<{ media: MediaItem[] }>("/api/media").then((r) => setItems(r.media)).catch((e) => setError(e.message));
+    load();
+    window.addEventListener("media-changed", load);
+    return () => window.removeEventListener("media-changed", load);
   }, []);
 
   const remove = async (m: MediaItem) => {
@@ -33,12 +39,15 @@ export function MediaLibrary() {
       await api(`/api/media/${m.id}`, { method: "DELETE" });
       setItems((xs) => xs?.filter((x) => x.id !== m.id) ?? null);
       setOpen(null);
+      storageChanged();
     } catch (e) {
       setError((e as Error).message);
     }
   };
 
-  const shown = (items ?? []).filter((m) => filter === "all" || m.kind === filter);
+  const shown = (items ?? [])
+    .filter((m) => filter === "all" || m.kind === filter)
+    .sort((a, b) => (sort === "largest" ? b.size - a.size : b.createdAt - a.createdAt));
 
   return (
     <div
@@ -57,10 +66,17 @@ export function MediaLibrary() {
           </>
         }
       />
-      <div className="seg mb-4">
-        {(["all", "image", "video"] as const).map((f) => (
-          <button key={f} aria-pressed={filter === f} onClick={() => setFilter(f)}>{f === "all" ? "All" : f === "image" ? "Photos" : "Videos"}</button>
-        ))}
+      <StoragePanel />
+      <div className="flex flex-wrap items-center gap-2 mb-4">
+        <div className="seg">
+          {(["all", "image", "video"] as const).map((f) => (
+            <button key={f} aria-pressed={filter === f} onClick={() => setFilter(f)}>{f === "all" ? "All" : f === "image" ? "Photos" : "Videos"}</button>
+          ))}
+        </div>
+        <div className="seg ml-auto">
+          <button aria-pressed={sort === "newest"} onClick={() => setSort("newest")}>Newest</button>
+          <button aria-pressed={sort === "largest"} onClick={() => setSort("largest")}>Largest</button>
+        </div>
       </div>
       {error && <div className="mb-4" onClick={() => setError("")}><Banner tone="error">{error}</Banner></div>}
       <div className="mb-4"><UploadJobs jobs={jobs} dismiss={dismiss} /></div>
@@ -69,7 +85,7 @@ export function MediaLibrary() {
       ) : shown.length === 0 ? (
         <Empty title="No media yet">Upload photos and videos here or straight from the composer. Images are converted to JPEG for Instagram automatically.</Empty>
       ) : (
-        <div className="grid grid-cols-3 sm:grid-cols-4 lg:grid-cols-6 gap-2">
+        <div className="grid grid-cols-3 sm:grid-cols-4 lg:grid-cols-6 gap-2" data-testid="library">
           {shown.map((m) => (
             <button
               key={m.id}
@@ -82,6 +98,9 @@ export function MediaLibrary() {
                 <span className={`absolute top-1.5 right-1.5 grid place-items-center w-6 h-6 rounded-full text-xs font-semibold border-2 ${sel.includes(m.id) ? "bg-accent border-accent text-accent-ink" : "border-white/90 bg-black/30"}`}>
                   {sel.includes(m.id) ? sel.indexOf(m.id) + 1 : ""}
                 </span>
+              )}
+              {sort === "largest" && (
+                <span className="absolute right-1.5 bottom-1.5 chip h-5 px-1.5 bg-black/60 text-white text-[10px] tabular-nums">{fmtBytes(m.size)}</span>
               )}
               {!selecting && (m.pendingPosts ?? 0) > 0 && (
                 <span className="absolute top-1.5 left-1.5 chip h-5 px-1.5 bg-black/60 text-white text-[10px]">In {m.pendingPosts} post{m.pendingPosts! > 1 ? "s" : ""}</span>

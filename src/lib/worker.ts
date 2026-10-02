@@ -4,6 +4,7 @@ import { db } from "./db";
 import { flagReconnect, getAccountRow, listAccountRows } from "./accounts";
 import { getMediaRow, purgePublishedMedia } from "./media";
 import { config } from "./config";
+import { invalidateStorage } from "./storage";
 import { addEvent, getPostRow, getTargetRow, postMediaRows } from "./posts";
 import { PublishError, errorMessage } from "./errors";
 import { publishTarget } from "./providers";
@@ -51,6 +52,7 @@ export async function processTarget(id: string, deps: { sleep?: (ms: number) => 
     if (!config.keepPublishedMedia) {
       try {
         const n = purgePublishedMedia(post.id);
+        if (n) invalidateStorage();
         if (n) log("info", `Deleted ${n} media file${n > 1 ? "s" : ""} from the server; no pending post needs ${n > 1 ? "them" : "it"}.`);
       } catch (e) {
         console.error("[worker] media cleanup failed", e);

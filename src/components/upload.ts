@@ -2,6 +2,8 @@
 
 import { useCallback, useState } from "react";
 import type { MediaItem } from "@/lib/types";
+import { fmtBytes } from "@/lib/format";
+import { getStorage, storageChanged } from "./storage";
 
 const MAX_JPEG = 8 * 1024 * 1024;
 const THUMB_EDGE = 480;
@@ -145,8 +147,18 @@ export function useUploader(onUploaded: (m: MediaItem) => void) {
       for (const { f, key } of keyed) {
         try {
           const prepared = await prepareFile(f);
+          // Refuse before sending gigabytes that the server would reject at the end.
+          const s = getStorage();
+          if (s && prepared.blob.size > s.uploadable) {
+            throw new Error(
+              s.uploadable <= 0
+                ? `Storage is full (${fmtBytes(s.used)} of ${fmtBytes(s.limit)}). Free up space under Media → Storage.`
+                : `${fmtBytes(prepared.blob.size)} won't fit: ${fmtBytes(s.uploadable)} left. Free up space under Media → Storage.`,
+            );
+          }
           const media = await uploadPrepared(prepared, (p) => update(key, { progress: p }));
           onUploaded(media);
+          storageChanged();
           setJobs((js) => js.filter((j) => j.key !== key));
         } catch (e) {
           update(key, { error: (e as Error).message });

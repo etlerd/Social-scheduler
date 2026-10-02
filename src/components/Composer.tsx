@@ -423,7 +423,9 @@ export function Composer({ editId, duplicateId, date, mediaParam }: { editId?: s
             onDrop={(e) => { e.preventDefault(); setDragOver(false); if (e.dataTransfer.files.length) upload(e.dataTransfer.files); }}
           >
             <div className="flex items-center justify-between mb-3">
-              <h2 className="text-sm font-semibold">Media {media.length > 0 && <span className="text-muted font-normal">· {media.length}</span>}</h2>
+              <h2 className="text-sm font-semibold">
+                Media {media.length > 0 && <span className="text-muted font-normal">· {media.length} · {fmtBytes(media.reduce((n, m) => n + m.size, 0))}</span>}
+              </h2>
               <div className="flex gap-2">
                 <button className="btn-ghost btn-sm" onClick={() => setPickerOpen(true)}><IconImage size={14} /> Library</button>
                 <button className="btn-ghost btn-sm" onClick={() => fileRef.current?.click()}><IconUpload size={14} /> Upload</button>

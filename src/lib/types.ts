@@ -130,3 +130,31 @@ export interface Issue {
   level: "error" | "warning";
   message: string;
 }
+
+export type HeldBy = "waiting" | "failed" | "unused";
+
+export type StorageLevel = "ok" | "warn" | "critical" | "full";
+
+export interface StorageBreakdown {
+  /** Files used by scheduled, publishing or draft posts. */
+  waiting: number;
+  /** Files held only because a post failed (kept for retry). */
+  failed: number;
+  /** Library files no unpublished post uses. */
+  unused: number;
+  /** Database plus thumbnail previews. */
+  app: number;
+}
+
+export interface StorageReport {
+  limit: number;
+  used: number;
+  free: number;
+  /** Largest single upload that fits, after the reserve. */
+  uploadable: number;
+  level: StorageLevel;
+  breakdown: StorageBreakdown;
+  /** Biggest files, with what is keeping each one. */
+  largest: (MediaItem & { heldBy: HeldBy })[];
+}
+

@@ -154,8 +154,9 @@ export function deleteMedia(id: string): boolean {
     db().prepare("DELETE FROM post_media WHERE media_id = ?").run(id);
     db().prepare("DELETE FROM media WHERE id = ?").run(id);
   })();
-  fs.rm(mediaFilePath(row), { force: true }, () => {});
-  if (row.thumb_file) fs.rm(mediaFilePath({ file_name: row.thumb_file }), { force: true }, () => {});
+  // Synchronous so storage accounting right after a delete sees the space as free.
+  fs.rmSync(mediaFilePath(row), { force: true });
+  if (row.thumb_file) fs.rmSync(mediaFilePath({ file_name: row.thumb_file }), { force: true });
   return true;
 }
 

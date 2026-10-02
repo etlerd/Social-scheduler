@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import type { ReactNode } from "react";
 import { Toaster } from "./toast";
+import { StorageBanner, StorageMeter, useStorage } from "./storage";
 import { IconCalendar, IconImage, IconList, IconLogout, IconPlus, IconUsers } from "./icons";
 
 const NAV = [
@@ -16,6 +17,7 @@ const NAV = [
 export function AppShell({ children }: { children: ReactNode }) {
   const path = usePathname();
   const router = useRouter();
+  const storage = useStorage();
   const active = (href: string) => (href === "/" ? path === "/" : path.startsWith(href));
   const logout = async () => {
     await fetch("/api/auth/logout", { method: "POST" });
@@ -45,12 +47,16 @@ export function AppShell({ children }: { children: ReactNode }) {
             </Link>
           ))}
         </nav>
-        <button onClick={logout} className="mt-auto flex items-center gap-3 rounded-xl px-3 h-10 text-sm text-muted hover:text-ink hover:bg-surface-2">
+        {storage && <StorageMeter r={storage} className="mt-auto mb-1" />}
+        <button onClick={logout} className={`${storage ? "" : "mt-auto "}flex items-center gap-3 rounded-xl px-3 h-10 text-sm text-muted hover:text-ink hover:bg-surface-2`}>
           <IconLogout size={18} /> Sign out
         </button>
       </aside>
 
-      <main className="mx-auto max-w-6xl px-4 pt-4 pb-28 md:px-8 md:pt-8 md:pb-12">{children}</main>
+      <main className="mx-auto max-w-6xl px-4 pt-4 pb-28 md:px-8 md:pt-8 md:pb-12">
+        {!path.startsWith("/media") && <StorageBanner />}
+        {children}
+      </main>
       <Toaster />
 
       {/* Mobile tab bar */}
@@ -68,7 +74,10 @@ export function AppShell({ children }: { children: ReactNode }) {
             </span>
           </Link>
           {NAV.slice(2).map(({ href, label, icon: Icon }) => (
-            <Link key={href} href={href} className={`flex flex-col items-center justify-center gap-0.5 text-[11px] ${active(href) ? "text-accent" : "text-muted"}`}>
+            <Link key={href} href={href} className={`relative flex flex-col items-center justify-center gap-0.5 text-[11px] ${active(href) ? "text-accent" : "text-muted"}`}>
+              {href === "/media" && storage && storage.level !== "ok" && (
+                <span className={`absolute top-2 left-1/2 ml-2 w-2.5 h-2.5 rounded-full ring-2 ring-surface ${storage.level === "warn" ? "bg-warn" : "bg-bad"}`} aria-label="Storage needs attention" />
+              )}
               <Icon size={22} />
               {label}
             </Link>

@@ -98,11 +98,11 @@ try {
   const thumbBytes = (await (await page.request.get(`${BASE}${thumbRes.thumbUrl}`)).body()).length;
   console.log(`  original ${(orig / 1024).toFixed(0)} KB → grid preview ${(thumbBytes / 1024).toFixed(0)} KB`);
   if (thumbBytes > 120 * 1024) throw new Error("thumbnail too big");
-  await page.locator(`img[src="${thumbRes.thumbUrl}"]`).waitFor();
+  await page.locator(`[data-testid=library] img[src="${thumbRes.thumbUrl}"]`).waitFor();
 
   step("media library shows converted JPEG");
   await page.goto(`${BASE}/media`);
-  await page.locator("button:has(img[alt='square.jpg'])").click();
+  await page.locator("[data-testid=library] button:has(img[alt='square.jpg'])").click();
   await page.getByText("image/jpeg").waitFor();
   await page.keyboard.press("Escape");
 
@@ -165,11 +165,11 @@ try {
   await page.click(".seg >> text=Month");
   await page.goto(`${BASE}/media`);
   await page.click("button:text-is('Select')");
-  await page.locator("main .grid button").nth(0).click();
-  await page.locator("main .grid button").nth(1).click();
+  await page.locator("[data-testid=library] button").nth(0).click();
+  await page.locator("[data-testid=library] button").nth(1).click();
   await page.click("text=New post with 2");
   await page.waitForURL(/compose\?media=/);
-  await page.getByText("· 2", { exact: true }).waitFor();
+  await page.getByText(/^· 2 · /).waitFor();
   await page.locator("button[aria-pressed]", { hasText: "Demo IG" }).click();
   await page.click("button.chip:text-is('In 1 hour')");
   await page.locator("button.chip.text-accent", { hasText: "In 1 hour" }).waitFor();

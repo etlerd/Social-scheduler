@@ -9,6 +9,8 @@ import { ApiError } from "@/lib/errors";
 import { EXT_BY_MIME, MIME_BY_EXT, insertMedia, listMedia, toMediaItem, type MediaRow } from "@/lib/media";
 import { db } from "@/lib/db";
 import { readVideoMeta } from "@/lib/mp4";
+import { fmtBytes } from "@/lib/format";
+import { invalidateStorage, storageReport, uploadAllowance } from "@/lib/storage";
 
 export const GET = route(async () => Response.json({ media: listMedia() }));
 
@@ -27,6 +29,17 @@ export const POST = route(async (req) => {
   if (!ext) throw new ApiError(415, `Unsupported file type: ${mime || "unknown"}`);
   const declared = Number(req.headers.get("content-length") || 0);
   if (declared > config.maxUploadBytes) throw new ApiError(413, "File too large");
+  invalidateStorage();
+  const allowance = uploadAllowance();
+  const noRoom = (size: number) => {
+    const r = storageReport();
+    return new ApiError(
+      507,
+      `Not enough storage: this file is ${fmtBytes(size)} but only ${fmtBytes(Math.max(0, allowance))} is free (${fmtBytes(r.used)} of ${fmtBytes(r.limit)} used). Free up space under Media → Storage.`,
+      { storage: r },
+    );
+  };
+  if (declared && declared > allowance) throw noRoom(declared);
 
   db(); // ensures the media directory exists
   const id = randomId(9);
@@ -37,17 +50,18 @@ export const POST = route(async (req) => {
     transform(chunk, _enc, cb) {
       size += chunk.length;
       if (size > config.maxUploadBytes) cb(new ApiError(413, "File too large"));
+      else if (size > allowance) cb(noRoom(size));
       else cb(null, chunk);
     },
   });
   try {
     await pipeline(Readable.fromWeb(req.body as never), limit, fs.createWriteStream(dest));
   } catch (e) {
-    fs.rm(dest, { force: true }, () => {});
+    fs.rmSync(dest, { force: true });
     throw e instanceof ApiError ? e : new ApiError(400, "Upload interrupted");
   }
   if (!size) {
-    fs.rm(dest, { force: true }, () => {});
+    fs.rmSync(dest, { force: true });
     throw new ApiError(400, "Empty upload");
   }
   const kind = mime.startsWith("video/") ? "video" : "image";
@@ -74,5 +88,6 @@ export const POST = route(async (req) => {
     purged_at: null,
   };
   insertMedia(row);
+  invalidateStorage();
   return Response.json({ media: toMediaItem(row) }, { status: 201 });
 });
