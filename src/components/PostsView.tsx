@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { api } from "@/lib/client";
 import type { Post } from "@/lib/types";
@@ -19,7 +20,11 @@ const TABS = [
 
 export function PostsView() {
   const [posts, setPosts] = useState<Post[] | null>(null);
-  const [tab, setTab] = useState<(typeof TABS)[number]["key"]>("upcoming");
+  const params = useSearchParams();
+  const [tab, setTab] = useState<(typeof TABS)[number]["key"]>(() => {
+    const t = params.get("tab");
+    return TABS.some((x) => x.key === t) ? (t as (typeof TABS)[number]["key"]) : "upcoming";
+  });
   const [q, setQ] = useState("");
 
   useEffect(() => {

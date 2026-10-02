@@ -144,6 +144,15 @@ export interface ValidateInput {
   now?: number;
 }
 
+export const SCHEDULE_ERRORS = ["Pick a date and time.", "Scheduled time is in the past."];
+
+/** Media-only errors for a content type: does what's attached fit it at all? */
+export function mediaProblems(ct: ContentType, media: MediaLike[]): string[] {
+  return validateTarget({ contentType: ct, options: { title: "x" }, caption: "", media, lookup: () => undefined, scheduledAt: null, mode: "draft" })
+    .filter((i) => i.level === "error")
+    .map((i) => i.message);
+}
+
 export function validateTarget(input: ValidateInput): Issue[] {
   const { contentType: ct, options: o, caption, media, lookup, mode } = input;
   const now = input.now ?? Date.now();
@@ -152,8 +161,8 @@ export function validateTarget(input: ValidateInput): Issue[] {
   const platform = CONTENT_TYPES[ct].platform;
 
   if (mode === "schedule") {
-    if (input.scheduledAt == null) out.push({ level: "error", message: "Pick a date and time." });
-    else if (input.scheduledAt < now - 60_000) out.push({ level: "error", message: "Scheduled time is in the past." });
+    if (input.scheduledAt == null) out.push({ level: "error", message: SCHEDULE_ERRORS[0] });
+    else if (input.scheduledAt < now - 60_000) out.push({ level: "error", message: SCHEDULE_ERRORS[1] });
   }
 
   if (platform === "instagram") {

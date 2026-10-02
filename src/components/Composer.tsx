@@ -4,8 +4,8 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, ClientError } from "@/lib/client";
-import { fmtBytes, fmtDuration, fromLocalInput, timeZoneName, toLocalInput } from "@/lib/format";
-import { CONTENT_TYPES, PLATFORM_TYPES, YT_CATEGORIES, countHashtags, defaultOptions, tagsLength, usesNativeSchedule, validateTarget } from "@/lib/rules";
+import { fmtBytes, fmtDateTime, fmtDuration, fromLocalInput, ratioLabel, timeZoneName, toLocalInput } from "@/lib/format";
+import { CONTENT_TYPES, PLATFORM_TYPES, SCHEDULE_ERRORS, YT_CATEGORIES, countHashtags, defaultOptions, mediaProblems, tagsLength, usesNativeSchedule, validateTarget } from "@/lib/rules";
 import type { AccountSummary, ContentType, Issue, MediaItem, Platform, Post, PostInput, TargetOptions } from "@/lib/types";
 import { PageHeader } from "./AppShell";
 import { IconChevron, IconEye, IconImage, IconUpload, IconX } from "./icons";
@@ -142,7 +142,13 @@ export function Composer({ editId, duplicateId, date }: { editId?: string; dupli
     return out;
   }, [targets, caption, media, lookup, scheduledAt, mode]);
 
+  const whenError = Object.values(issues).flat().find((i) => SCHEDULE_ERRORS.includes(i.message))?.message;
+  const panelIssues = (id: string) => (issues[id] ?? []).filter((i) => !SCHEDULE_ERRORS.includes(i.message));
   const errorCount = Object.values(issues).flat().filter((i) => i.level === "error").length;
+  const jumpToFirstError = () => {
+    const id = whenError ? "when" : Object.keys(issues).map((k) => (issues[k].some((i) => i.level === "error") ? `target-${k}` : "")).find(Boolean);
+    if (id) document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
   const selected = (accounts ?? []).filter((a) => targets[a.id]);
 
   const toggleAccount = (a: AccountSummary) => {
@@ -305,7 +311,7 @@ export function Composer({ editId, duplicateId, date }: { editId?: string; dupli
                     </button>
                     <div className="flex justify-between items-center mt-1 text-[11px] text-muted">
                       <button disabled={i === 0} onClick={() => moveMedia(i, -1)} className="p-1 disabled:opacity-30" aria-label="Move left"><IconChevron size={14} className="rotate-180" /></button>
-                      <span className="truncate">{m.width && m.height ? `${m.width}×${m.height}` : fmtBytes(m.size)}{m.kind === "video" && m.duration ? ` · ${fmtDuration(m.duration)}` : ""}</span>
+                      <span className="truncate" title={m.width && m.height ? `${m.width}×${m.height}` : undefined}>{m.width && m.height ? ratioLabel(m.width, m.height) : fmtBytes(m.size)}{m.kind === "video" && m.duration ? ` · ${fmtDuration(m.duration)}` : ""}</span>
                       <button disabled={i === media.length - 1} onClick={() => moveMedia(i, 1)} className="p-1 disabled:opacity-30" aria-label="Move right"><IconChevron size={14} /></button>
                     </div>
                   </div>
@@ -331,24 +337,8 @@ export function Composer({ editId, duplicateId, date }: { editId?: string; dupli
             </div>
           </section>
 
-          {/* Per-destination settings */}
-          {selected.map((a) => (
-            <TargetPanel
-              key={a.id}
-              account={a}
-              state={targets[a.id]}
-              issues={[...(issues[a.id] ?? []), ...(serverIssues[a.id] ?? []).filter((s) => !(issues[a.id] ?? []).some((i) => i.message === s.message))]}
-              library={library}
-              addToLibrary={addToLibrary}
-              lookup={lookup}
-              scheduledAt={scheduledAt}
-              onType={(ct) => setTarget(a.id, { contentType: ct, touched: true, options: { ...defaultOptions(ct), ...targets[a.id].options } })}
-              onOpt={(p) => setOpt(a.id, p)}
-            />
-          ))}
-
           {/* Schedule */}
-          <section className="card p-4">
+          <section id="when" className="card p-4 scroll-mt-6">
             <h2 className="text-sm font-semibold mb-3">When</h2>
             <div className="seg mb-3">
               <button aria-pressed={mode === "schedule"} onClick={() => setMode("schedule")}>Schedule</button>
@@ -358,15 +348,48 @@ export function Composer({ editId, duplicateId, date }: { editId?: string; dupli
               <div>
                 <input type="datetime-local" className="input max-w-72" value={when} onChange={(e) => { touch(); setWhen(e.target.value); }} />
                 <p className="text-xs text-muted mt-1.5">{timeZoneName()}</p>
+                {whenError && <p className="text-xs text-bad mt-1.5">{whenError}</p>}
               </div>
             )}
           </section>
+
+          {/* Per-destination settings */}
+          {selected.map((a) => (
+            <TargetPanel
+              key={a.id}
+              account={a}
+              state={targets[a.id]}
+              issues={[...panelIssues(a.id), ...(serverIssues[a.id] ?? []).filter((s) => !panelIssues(a.id).some((i) => i.message === s.message))]}
+              library={library}
+              addToLibrary={addToLibrary}
+              lookup={lookup}
+              scheduledAt={scheduledAt}
+              media={media}
+              onType={(ct) => setTarget(a.id, { contentType: ct, touched: true, options: { ...defaultOptions(ct), ...targets[a.id].options } })}
+              onOpt={(p) => setOpt(a.id, p)}
+            />
+          ))}
+
 
           {error && <Banner tone="error">{error}</Banner>}
 
           <div className="sticky bottom-20 md:bottom-4 z-30 card p-3 flex items-center gap-2 shadow-lg">
             <span className="text-xs text-muted flex-1 min-w-0 truncate">
-              {selected.length === 0 ? "Pick at least one account" : errorCount ? <span className="text-bad">{errorCount} issue{errorCount > 1 ? "s" : ""} to fix</span> : "Ready"}
+              {selected.length === 0 ? (
+                "Pick at least one account"
+              ) : errorCount ? (
+                <button className="text-bad underline underline-offset-2" onClick={jumpToFirstError}>
+                  {errorCount} issue{errorCount > 1 ? "s" : ""} to fix
+                </button>
+              ) : mode === "now" ? (
+                `Publishes now to ${selected.length} destination${selected.length > 1 ? "s" : ""}`
+              ) : scheduledAt ? (
+                <>
+                  <span className="text-ink font-medium">{fmtDateTime(scheduledAt)}</span> · {selected.length} destination{selected.length > 1 ? "s" : ""}
+                </>
+              ) : (
+                "Pick a time"
+              )}
             </span>
             <button className="btn-ghost" disabled={!!busy} onClick={() => submit(true)}>
               {busy === "draft" && <Spinner />} Save draft
@@ -407,6 +430,7 @@ function TargetPanel({
   addToLibrary,
   lookup,
   scheduledAt,
+  media,
   onType,
   onOpt,
 }: {
@@ -417,6 +441,7 @@ function TargetPanel({
   addToLibrary: (m: MediaItem) => void;
   lookup: (id: string) => MediaItem | undefined;
   scheduledAt: number | null;
+  media: MediaItem[];
   onType: (ct: ContentType) => void;
   onOpt: (p: Partial<TargetOptions>) => void;
 }) {
@@ -427,6 +452,11 @@ function TargetPanel({
   const [plError, setPlError] = useState("");
   const [tagText, setTagText] = useState((o.tags ?? []).join(", "));
   const yt = a.platform === "youtube";
+  const [advancedOpen, setAdvancedOpen] = useState(false);
+  const tagError = issues.some((i) => i.level === "error" && /^Tags/.test(i.message));
+  useEffect(() => {
+    if (tagError) setAdvancedOpen(true);
+  }, [tagError]);
 
   useEffect(() => {
     if (!yt) return;
@@ -438,9 +468,16 @@ function TargetPanel({
   const thumb = o.thumbnailMediaId ? lookup(o.thumbnailMediaId) : undefined;
   const cover = o.coverMediaId ? lookup(o.coverMediaId) : undefined;
   const native = (ct === "yt_video" || ct === "yt_short") && scheduledAt != null && usesNativeSchedule(o, scheduledAt);
+  const ytSummary = [
+    o.tags?.length ? `${o.tags.length} tag${o.tags.length > 1 ? "s" : ""}` : "No tags",
+    YT_CATEGORIES.find(([id]) => id === (o.categoryId ?? "22"))?.[1],
+    o.madeForKids ? "Made for kids" : "Not for kids",
+    playlists?.find((p) => p.id === o.playlistId)?.title,
+  ].filter(Boolean).join(" · ");
+  const fits = (t: ContentType) => (media.length === 0 ? [] : mediaProblems(t, media));
 
   return (
-    <section className="card p-4">
+    <section id={`target-${a.id}`} className="card p-4 scroll-mt-6">
       <div className="flex items-center gap-3 mb-3">
         <AccountAvatar account={a} size={32} />
         <div className="min-w-0">
@@ -449,10 +486,26 @@ function TargetPanel({
         </div>
       </div>
       <div className="seg mb-4 max-w-full overflow-x-auto no-scrollbar">
-        {PLATFORM_TYPES[a.platform].map((t) => (
-          <button key={t} aria-pressed={t === ct} onClick={() => onType(t)}>{CONTENT_TYPES[t].label}</button>
-        ))}
+        {PLATFORM_TYPES[a.platform].map((t) => {
+          const misfit = fits(t);
+          return (
+            <button key={t} aria-pressed={t === ct} onClick={() => onType(t)} title={misfit[0] ?? CONTENT_TYPES[t].hint} className="relative">
+              {CONTENT_TYPES[t].label}
+              {misfit.length > 0 && <span className="absolute top-1 right-1 w-1.5 h-1.5 rounded-full bg-bad" aria-label="Doesn't fit the attached media" />}
+            </button>
+          );
+        })}
       </div>
+        {issues.length > 0 && (
+          <ul className="space-y-1 mb-4 rounded-xl bg-surface-2 px-3 py-2.5">
+            {issues.map((i, n) => (
+              <li key={n} className={`text-xs flex gap-1.5 ${i.level === "error" ? "text-bad" : "text-warn"}`}>
+                <span>{i.level === "error" ? "●" : "▲"}</span>
+                {i.message}
+              </li>
+            ))}
+          </ul>
+        )}
 
       <div className="space-y-4">
         {!yt && ct === "ig_reel" && (
@@ -505,55 +558,12 @@ function TargetPanel({
               )}
             </div>
             <div>
-              <label className="label">Tags <span className="font-normal">(comma separated)</span></label>
-              <input
-                className="input"
-                value={tagText}
-                onChange={(e) => {
-                  setTagText(e.target.value);
-                  onOpt({ tags: e.target.value.split(",").map((t) => t.trim()).filter(Boolean) });
-                }}
-                placeholder="tutorial, cooking, quick recipes"
-              />
-              <p className="text-xs text-muted mt-1 text-right">{tagsLength(o.tags ?? [])}/500</p>
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="label">Visibility</label>
-                <select className="input" value={o.privacy ?? "public"} onChange={(e) => onOpt({ privacy: e.target.value as TargetOptions["privacy"] })}>
-                  <option value="public">Public</option>
-                  <option value="unlisted">Unlisted</option>
-                  <option value="private">Private</option>
-                </select>
-              </div>
-              <div>
-                <label className="label">Category</label>
-                <select className="input" value={o.categoryId ?? "22"} onChange={(e) => onOpt({ categoryId: e.target.value })}>
-                  {YT_CATEGORIES.map(([id, name]) => <option key={id} value={id}>{name}</option>)}
-                </select>
-              </div>
-            </div>
-            <div>
-              <span className="label">Audience</span>
+              <label className="label">Visibility</label>
               <div className="seg">
-                <button aria-pressed={!o.madeForKids} onClick={() => onOpt({ madeForKids: false })}>Not made for kids</button>
-                <button aria-pressed={!!o.madeForKids} onClick={() => onOpt({ madeForKids: true })}>Made for kids</button>
+                {(["public", "unlisted", "private"] as const).map((v) => (
+                  <button key={v} aria-pressed={(o.privacy ?? "public") === v} onClick={() => onOpt({ privacy: v })}>{v[0].toUpperCase() + v.slice(1)}</button>
+                ))}
               </div>
-            </div>
-            <label className="flex items-start gap-2 text-sm">
-              <input type="checkbox" className="mt-0.5" checked={!!o.syntheticMedia} onChange={(e) => onOpt({ syntheticMedia: e.target.checked })} />
-              <span>Contains realistic altered or synthetic content <span className="text-muted">(YouTube disclosure)</span></span>
-            </label>
-            <div>
-              <label className="label">Playlist</label>
-              {plError ? (
-                <p className="text-xs text-bad">{plError}</p>
-              ) : (
-                <select className="input" value={o.playlistId ?? ""} onChange={(e) => onOpt({ playlistId: e.target.value || undefined })} disabled={!playlists}>
-                  <option value="">None</option>
-                  {playlists?.map((p) => <option key={p.id} value={p.id}>{p.title}</option>)}
-                </select>
-              )}
             </div>
             <div>
               <span className="label">Thumbnail</span>
@@ -570,37 +580,77 @@ function TargetPanel({
               </div>
               {ct === "yt_short" && <p className="text-xs text-muted mt-1">YouTube may ignore custom thumbnails on Shorts.</p>}
             </div>
-            {ct !== "yt_live" && (
-              <>
-                <label className="flex items-center gap-2 text-sm">
-                  <input type="checkbox" checked={o.notifySubscribers !== false} onChange={(e) => onOpt({ notifySubscribers: e.target.checked })} />
-                  Notify subscribers
-                </label>
+            <details className="group rounded-xl border border-line" open={advancedOpen} onToggle={(e) => setAdvancedOpen((e.target as HTMLDetailsElement).open)}>
+              <summary className="flex items-center gap-2 cursor-pointer list-none px-3 py-2.5 text-sm">
+                <IconChevron size={14} className="transition group-open:rotate-90 text-muted" />
+                <span className="font-medium">More YouTube settings</span>
+                <span className="text-xs text-muted truncate ml-auto">{ytSummary}</span>
+              </summary>
+              <div className="space-y-4 px-3 pb-3 pt-1">
+                <div>
+                  <label className="label">Tags <span className="font-normal">(comma separated)</span></label>
+                  <input
+                    className="input"
+                    value={tagText}
+                    onChange={(e) => {
+                      setTagText(e.target.value);
+                      onOpt({ tags: e.target.value.split(",").map((t) => t.trim()).filter(Boolean) });
+                    }}
+                    placeholder="tutorial, cooking, quick recipes"
+                  />
+                  <p className="text-xs text-muted mt-1 text-right">{tagsLength(o.tags ?? [])}/500</p>
+                </div>
+                <div>
+                  <label className="label">Category</label>
+                  <select className="input" value={o.categoryId ?? "22"} onChange={(e) => onOpt({ categoryId: e.target.value })}>
+                    {YT_CATEGORIES.map(([id, name]) => <option key={id} value={id}>{name}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <span className="label">Audience</span>
+                  <div className="seg">
+                    <button aria-pressed={!o.madeForKids} onClick={() => onOpt({ madeForKids: false })}>Not made for kids</button>
+                    <button aria-pressed={!!o.madeForKids} onClick={() => onOpt({ madeForKids: true })}>Made for kids</button>
+                  </div>
+                </div>
                 <label className="flex items-start gap-2 text-sm">
-                  <input type="checkbox" className="mt-0.5" checked={o.nativeSchedule !== false} onChange={(e) => onOpt({ nativeSchedule: e.target.checked })} />
-                  <span>
-                    Upload now, let YouTube publish on time
-                    <span className="block text-xs text-muted">
-                      {native ? "On: uploads immediately as private with a publish time. Safe even if this server goes offline." : "Applies to public posts scheduled 10+ minutes ahead."}
-                    </span>
-                  </span>
+                  <input type="checkbox" className="mt-0.5" checked={!!o.syntheticMedia} onChange={(e) => onOpt({ syntheticMedia: e.target.checked })} />
+                  <span>Contains realistic altered or synthetic content <span className="text-muted">(YouTube disclosure)</span></span>
                 </label>
-              </>
-            )}
+                <div>
+                  <label className="label">Playlist</label>
+                  {plError ? (
+                    <p className="text-xs text-bad">{plError}</p>
+                  ) : (
+                    <select className="input" value={o.playlistId ?? ""} onChange={(e) => onOpt({ playlistId: e.target.value || undefined })} disabled={!playlists}>
+                      <option value="">None</option>
+                      {playlists?.map((p) => <option key={p.id} value={p.id}>{p.title}</option>)}
+                    </select>
+                  )}
+                </div>
+                {ct !== "yt_live" && (
+                  <>
+                    <label className="flex items-center gap-2 text-sm">
+                      <input type="checkbox" checked={o.notifySubscribers !== false} onChange={(e) => onOpt({ notifySubscribers: e.target.checked })} />
+                      Notify subscribers
+                    </label>
+                    <label className="flex items-start gap-2 text-sm">
+                      <input type="checkbox" className="mt-0.5" checked={o.nativeSchedule !== false} onChange={(e) => onOpt({ nativeSchedule: e.target.checked })} />
+                      <span>
+                        Upload now, let YouTube publish on time
+                        <span className="block text-xs text-muted">
+                          {native ? "On: uploads immediately as private with a publish time. Safe even if this server goes offline." : "Applies to public posts scheduled 10+ minutes ahead."}
+                        </span>
+                      </span>
+                    </label>
+                  </>
+                )}
+              </div>
+            </details>
             {ct === "yt_live" && <p className="text-xs text-muted">Creates the live event (with its watch page) right away. You still start the stream from YouTube Studio or your encoder. The channel must have live streaming enabled.</p>}
           </>
         )}
 
-        {issues.length > 0 && (
-          <ul className="space-y-1">
-            {issues.map((i, n) => (
-              <li key={n} className={`text-xs flex gap-1.5 ${i.level === "error" ? "text-bad" : "text-warn"}`}>
-                <span>{i.level === "error" ? "●" : "▲"}</span>
-                {i.message}
-              </li>
-            ))}
-          </ul>
-        )}
       </div>
 
       <MediaPicker

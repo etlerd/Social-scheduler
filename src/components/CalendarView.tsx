@@ -26,11 +26,29 @@ function gridStart(month: Date, weekStart: number): Date {
   return new Date(first.getFullYear(), first.getMonth(), 1 - offset);
 }
 
+function stripeColor(p: Post) {
+  if (p.status === "failed" || p.status === "partial") return "border-bad";
+  if (p.status === "published") return "border-ok";
+  if (p.status === "draft") return "border-muted";
+  if (p.status === "publishing") return "border-warn";
+  return "border-accent";
+}
+
 function dotColor(p: Post) {
   if (p.status === "failed" || p.status === "partial") return "bg-bad";
   if (p.status === "published") return "bg-ok";
   if (p.status === "draft") return "bg-muted";
   return "bg-accent";
+}
+
+function relativeWhen(ms: number): string {
+  const d = new Date(ms);
+  const today = new Date();
+  const tomorrow = new Date(today.getFullYear(), today.getMonth(), today.getDate() + 1);
+  const time = fmtTime(ms);
+  if (d.toDateString() === today.toDateString()) return `Today ${time}`;
+  if (d.toDateString() === tomorrow.toDateString()) return `Tomorrow ${time}`;
+  return `${d.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" })} ${time}`;
 }
 
 export function CalendarView() {
@@ -44,6 +62,7 @@ export function CalendarView() {
   const [selected, setSelected] = useState<string>(() => dayKey(Date.now()));
   const [error, setError] = useState("");
   const [dragId, setDragId] = useState<string | null>(null);
+  const [overview, setOverview] = useState<{ next: Post | null; week: number; failed: number } | null>(null);
 
   useEffect(() => setWeekStart(firstDayOfWeek()), []);
 
@@ -63,11 +82,25 @@ export function CalendarView() {
     }
   }, [days]);
 
+  const loadOverview = useCallback(async () => {
+    try {
+      const now = Date.now();
+      const { posts: all } = await api<{ posts: Post[] }>("/api/posts");
+      const upcoming = all.filter((p) => p.scheduledAt != null && p.scheduledAt > now && (p.status === "scheduled" || p.status === "publishing")).sort((a, b) => a.scheduledAt! - b.scheduledAt!);
+      setOverview({
+        next: upcoming[0] ?? null,
+        week: upcoming.filter((p) => p.scheduledAt! < now + 7 * 86400_000).length,
+        failed: all.filter((p) => p.status === "failed" || p.status === "partial").length,
+      });
+    } catch {}
+  }, []);
+
   useEffect(() => {
     load();
-    const t = setInterval(load, 20000);
+    loadOverview();
+    const t = setInterval(() => { load(); loadOverview(); }, 20000);
     return () => clearInterval(t);
-  }, [load]);
+  }, [load, loadOverview]);
 
   const byDay = useMemo(() => {
     const m = new Map<string, Post[]>();
@@ -131,6 +164,33 @@ export function CalendarView() {
         </p>
       )}
 
+      {overview && (
+        <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto] mb-4">
+          {overview.next ? (
+            <Link href={`/posts/${overview.next.id}`} className="card flex items-center gap-3 px-4 py-3 min-w-0 hover:border-muted/40">
+              <span className="text-xs font-medium text-muted uppercase tracking-wide shrink-0">Next</span>
+              <span className="text-sm tabular-nums shrink-0">{relativeWhen(overview.next.scheduledAt!)}</span>
+              <span className="text-sm font-medium truncate">{postLabel(overview.next)}</span>
+              <span className="ml-auto flex -space-x-1 shrink-0">{platformsOf(overview.next).map((pl) => <PlatformIcon key={pl} platform={pl} size={16} />)}</span>
+            </Link>
+          ) : (
+            <Link href="/compose" className="card flex items-center gap-3 px-4 py-3 text-sm text-muted hover:border-muted/40">
+              Nothing scheduled. <span className="text-accent">Create a post</span>
+            </Link>
+          )}
+          <div className="flex gap-2">
+            <span className="card flex items-center gap-2 px-4 py-3 text-sm whitespace-nowrap">
+              <span className="font-semibold tabular-nums">{overview.week}</span> <span className="text-muted">next 7 days</span>
+            </span>
+            {overview.failed > 0 && (
+              <Link href="/posts?tab=failed" className="card flex items-center gap-2 px-4 py-3 text-sm whitespace-nowrap border-bad/40 bg-bad/8 text-bad hover:bg-bad/12">
+                <span className="font-semibold tabular-nums">{overview.failed}</span> failed
+              </Link>
+            )}
+          </div>
+        </div>
+      )}
+
       <div className="card overflow-hidden">
         <div className="grid grid-cols-7 border-b border-line text-[11px] md:text-xs text-muted">
           {weekdays.map((w) => (
@@ -181,15 +241,16 @@ export function CalendarView() {
                       onDragStart={() => setDragId(p.id)}
                       onDragEnd={() => setDragId(null)}
                       onClick={(e) => e.stopPropagation()}
-                      className="flex items-center gap-1.5 rounded-lg bg-surface-2 hover:bg-line px-1.5 py-1 text-xs"
-                      title={postLabel(p)}
+                      className={`block rounded-lg bg-surface-2 hover:bg-line pl-2 pr-1.5 py-1 text-xs border-l-[3px] ${stripeColor(p)} ${p.editable && p.status === "scheduled" ? "cursor-grab active:cursor-grabbing" : ""}`}
+                      title={`${fmtTime(p.scheduledAt!)} · ${postLabel(p)}`}
                     >
-                      <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${dotColor(p)}`} />
-                      <span className="text-muted tabular-nums shrink-0">{fmtTime(p.scheduledAt!)}</span>
-                      <span className="truncate">{postLabel(p)}</span>
-                      <span className="ml-auto flex -space-x-1 shrink-0">
-                        {platformsOf(p).map((pl) => <PlatformIcon key={pl} platform={pl} size={13} />)}
+                      <span className="flex items-center gap-1">
+                        <span className="text-muted tabular-nums whitespace-nowrap">{fmtTime(p.scheduledAt!)}</span>
+                        <span className="ml-auto flex -space-x-1 shrink-0">
+                          {platformsOf(p).map((pl) => <PlatformIcon key={pl} platform={pl} size={12} />)}
+                        </span>
                       </span>
+                      <span className="block truncate font-medium mt-0.5">{postLabel(p)}</span>
                     </Link>
                   ))}
                   {list.length > 3 && (

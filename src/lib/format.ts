@@ -45,3 +45,12 @@ export function timeZoneName(): string {
     return "local time";
   }
 }
+
+const RATIOS: [string, number][] = [["9:16", 9 / 16], ["4:5", 4 / 5], ["2:3", 2 / 3], ["3:4", 3 / 4], ["1:1", 1], ["4:3", 4 / 3], ["3:2", 3 / 2], ["16:9", 16 / 9], ["1.91:1", 1.91]];
+
+/** Creator-facing name for an aspect ratio, e.g. 1080×1920 → "9:16". */
+export function ratioLabel(w: number, h: number): string {
+  const r = w / h;
+  const hit = RATIOS.find(([, v]) => Math.abs(r - v) / v < 0.02);
+  return hit ? hit[0] : r >= 1 ? `${r.toFixed(2)}:1` : `1:${(1 / r).toFixed(2)}`;
+}

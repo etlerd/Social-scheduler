@@ -129,7 +129,7 @@ try {
   await mp.goto(`${BASE}/compose`);
   await mp.locator("button[aria-pressed]", { hasText: "Demo Channel" }).click();
   await mp.setInputFiles("section:has-text('Media') input[type=file]", fx("landscape.mp4"));
-  await mp.getByText(/1920×1080/).waitFor({ timeout: 30000 });
+  await mp.locator("main").getByText(/^16:9/).waitFor({ timeout: 30000 });
   await mp.fill("input[placeholder='Video title']", "Full tutorial");
   if (await mp.evaluate(() => document.documentElement.scrollWidth > window.innerWidth)) throw new Error("horizontal overflow on mobile composer");
   await shot(mp, "mobile-compose");
