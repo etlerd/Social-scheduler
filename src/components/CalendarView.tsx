@@ -11,6 +11,7 @@ import { IconChevron, IconPlus, PlatformIcon } from "./icons";
 import { MediaThumb, Spinner, StatusBadge } from "./ui";
 import { platformsOf, postLabel, targetLabel } from "./postUtil";
 import { isPendingDelete, onPendingDeletesChange } from "./toast";
+import { usePolling } from "./usePolling";
 
 function firstDayOfWeek(): number {
   try {
@@ -80,16 +81,11 @@ function GettingStarted({ setup }: { setup: Setup }) {
 /** Next 60 days as a list grouped by day. */
 function AgendaList() {
   const [posts, setPosts] = useState<Post[] | null>(null);
-  useEffect(() => {
-    const load = () => {
-      const d = new Date();
-      const from = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
-      api<{ posts: Post[] }>(`/api/posts?from=${from}&to=${from + 60 * 86400_000}`).then((r) => setPosts(r.posts.filter((p) => !isPendingDelete(p.id)))).catch(() => {});
-    };
-    load();
-    const t = setInterval(load, 20000);
-    return () => clearInterval(t);
-  }, []);
+  usePolling(() => {
+    const d = new Date();
+    const from = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+    api<{ posts: Post[] }>(`/api/posts?from=${from}&to=${from + 60 * 86400_000}`).then((r) => setPosts(r.posts.filter((p) => !isPendingDelete(p.id)))).catch(() => {});
+  }, 20000);
   if (posts === null) return <div className="text-muted flex justify-center py-10"><Spinner /></div>;
   if (!posts.length) {
     return (
@@ -188,31 +184,15 @@ export function CalendarView() {
 
   const loadOverview = useCallback(async () => {
     try {
-      const now = Date.now();
-      const all = (await api<{ posts: Post[] }>("/api/posts")).posts.filter((p) => !isPendingDelete(p.id));
-      const upcoming = all.filter((p) => p.scheduledAt != null && p.scheduledAt > now && (p.status === "scheduled" || p.status === "publishing")).sort((a, b) => a.scheduledAt! - b.scheduledAt!);
-      const [{ accounts }, { media }] = await Promise.all([
-        api<{ accounts: unknown[] }>("/api/accounts"),
-        api<{ media: unknown[] }>("/api/media"),
-      ]);
-      const st = { accounts: accounts.length > 0, media: media.length > 0 || all.some((p) => p.media.length > 0), posts: all.some((p) => p.status !== "draft") };
-      setSetup({ ...st, done: st.accounts && st.media && st.posts });
-      setOverview({
-        next: upcoming[0] ?? null,
-        week: upcoming.filter((p) => p.scheduledAt! < now + 7 * 86400_000).length,
-        failed: all.filter((p) => p.status === "failed" || p.status === "partial").length,
-      });
+      const o = await api<{ next: Post | null; week: number; failed: number; setup: Omit<Setup, "done"> }>("/api/overview");
+      setSetup({ ...o.setup, done: o.setup.accounts && o.setup.media && o.setup.posts });
+      setOverview({ next: o.next && !isPendingDelete(o.next.id) ? o.next : null, week: o.week, failed: o.failed });
     } catch {}
   }, []);
 
   useEffect(() => onPendingDeletesChange(() => { load(); loadOverview(); }), [load, loadOverview]);
 
-  useEffect(() => {
-    load();
-    loadOverview();
-    const t = setInterval(() => { load(); loadOverview(); }, 20000);
-    return () => clearInterval(t);
-  }, [load, loadOverview]);
+  usePolling(() => { load(); loadOverview(); }, 20000, [load, loadOverview]);
 
   const byDay = useMemo(() => {
     const m = new Map<string, Post[]>();

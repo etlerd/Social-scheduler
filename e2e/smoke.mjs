@@ -66,7 +66,8 @@ try {
   await shot(page, "desktop-post-detail");
   step("published media file is deleted from the server");
   await page.reload();
-  await page.getByText("Video deleted after publishing").waitFor();
+  // With a decodable video the preview survives; without one (headless Chromium lacks H.264) a placeholder shows.
+  await page.locator("[title='Original deleted after publishing']").or(page.getByText("Video deleted after publishing")).first().waitFor();
 
   step("validation blocks a PNG-free IG post without media");
   await page.goto(`${BASE}/compose`);
@@ -87,6 +88,17 @@ try {
   await page.click("button.btn-primary:text-is('Schedule')");
   await page.waitForURL(/\/posts\/[\w-]+$/);
   await page.getByText("Scheduled", { exact: true }).first().waitFor();
+
+  step("large photo gets a small preview for grids");
+  await page.goto(`${BASE}/media`);
+  const up = page.waitForResponse((r) => r.url().includes("/thumb") && r.request().method() === "PUT");
+  await page.setInputFiles("input[type=file]", fx("photo-large.jpg"));
+  const thumbRes = await (await up).json();
+  const orig = fs.statSync(fx("photo-large.jpg")).size;
+  const thumbBytes = (await (await page.request.get(`${BASE}${thumbRes.thumbUrl}`)).body()).length;
+  console.log(`  original ${(orig / 1024).toFixed(0)} KB → grid preview ${(thumbBytes / 1024).toFixed(0)} KB`);
+  if (thumbBytes > 120 * 1024) throw new Error("thumbnail too big");
+  await page.locator(`img[src="${thumbRes.thumbUrl}"]`).waitFor();
 
   step("media library shows converted JPEG");
   await page.goto(`${BASE}/media`);

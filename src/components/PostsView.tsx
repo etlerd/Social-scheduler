@@ -1,55 +1,85 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { useSearchParams } from "next/navigation";
-import { isPendingDelete, onPendingDeletesChange } from "./toast";
+import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { api } from "@/lib/client";
 import type { Post } from "@/lib/types";
 import { PageHeader } from "./AppShell";
 import { PostRow } from "./CalendarView";
 import { IconPlus } from "./icons";
 import { Empty, Spinner } from "./ui";
+import { isPendingDelete, onPendingDeletesChange } from "./toast";
+import { usePolling } from "./usePolling";
 
 const TABS = [
-  { key: "upcoming", label: "Upcoming", match: (p: Post) => p.status === "scheduled" || p.status === "publishing" },
-  { key: "drafts", label: "Drafts", match: (p: Post) => p.status === "draft" },
-  { key: "published", label: "Published", match: (p: Post) => p.status === "published" },
-  { key: "failed", label: "Needs attention", match: (p: Post) => p.status === "failed" || p.status === "partial" },
-  { key: "all", label: "All", match: () => true },
+  { key: "upcoming", label: "Upcoming" },
+  { key: "drafts", label: "Drafts" },
+  { key: "published", label: "Published" },
+  { key: "failed", label: "Needs attention" },
+  { key: "all", label: "All" },
 ] as const;
+type Tab = (typeof TABS)[number]["key"];
+const PAGE = 50;
 
 export function PostsView() {
-  const [posts, setPosts] = useState<Post[] | null>(null);
   const params = useSearchParams();
-  const [tab, setTab] = useState<(typeof TABS)[number]["key"]>(() => {
+  const [tab, setTab] = useState<Tab>(() => {
     const t = params.get("tab");
-    return TABS.some((x) => x.key === t) ? (t as (typeof TABS)[number]["key"]) : "upcoming";
+    return TABS.some((x) => x.key === t) ? (t as Tab) : "upcoming";
   });
   const [q, setQ] = useState("");
-
-  useEffect(() => {
-    const load = () => api<{ posts: Post[] }>("/api/posts").then((r) => setPosts(r.posts)).catch(() => {});
-    load();
-    const t = setInterval(load, 20000);
-    return () => clearInterval(t);
-  }, []);
-
+  const [search, setSearch] = useState("");
+  const [posts, setPosts] = useState<Post[] | null>(null);
+  const [total, setTotal] = useState(0);
+  const [counts, setCounts] = useState<Record<Tab, number> | null>(null);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [, bump] = useState(0);
-  useEffect(() => onPendingDeletesChange(() => bump((n) => n + 1)), []);
-  const visible = (posts ?? []).filter((p) => !isPendingDelete(p.id));
-  const counts = Object.fromEntries(TABS.map((t) => [t.key, visible.filter(t.match).length]));
 
-  const shown = useMemo(() => {
-    const t = TABS.find((x) => x.key === tab)!;
-    const needle = q.trim().toLowerCase();
-    const list = visible.filter(t.match).filter((p) =>
-      !needle || p.caption.toLowerCase().includes(needle) || p.targets.some((x) => (x.options.title || "").toLowerCase().includes(needle)),
-    );
-    const key = (p: Post) => p.scheduledAt ?? p.updatedAt;
-    return tab === "upcoming" ? list.sort((a, b) => key(a) - key(b)) : list.sort((a, b) => key(b) - key(a));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [posts, tab, q, visible.length]);
+  useEffect(() => onPendingDeletesChange(() => bump((n) => n + 1)), []);
+
+  // Debounce typing so each keystroke doesn't hit the server.
+  useEffect(() => {
+    const t = setTimeout(() => setSearch(q.trim()), 250);
+    return () => clearTimeout(t);
+  }, [q]);
+
+  const url = useCallback(
+    (offset: number, limit: number) => `/api/posts?view=${tab}&offset=${offset}&limit=${limit}${search ? `&q=${encodeURIComponent(search)}` : ""}`,
+    [tab, search],
+  );
+
+  // Switching tab or search resets the list.
+  useEffect(() => setPosts(null), [tab, search]);
+
+  // Refresh what's on screen (at least one page) plus the tab counts.
+  usePolling(
+    () => {
+      api<{ posts: Post[]; total: number }>(url(0, Math.max(PAGE, posts?.length ?? 0)))
+        .then((r) => {
+          setPosts(r.posts);
+          setTotal(r.total);
+        })
+        .catch(() => {});
+      api<{ counts: Record<Tab, number> }>("/api/overview").then((r) => setCounts(r.counts)).catch(() => {});
+    },
+    20000,
+    [url],
+  );
+
+  const loadMore = async () => {
+    if (!posts) return;
+    setLoadingMore(true);
+    try {
+      const r = await api<{ posts: Post[]; total: number }>(url(posts.length, PAGE));
+      setPosts([...posts, ...r.posts.filter((p) => !posts.some((x) => x.id === p.id))]);
+      setTotal(r.total);
+    } finally {
+      setLoadingMore(false);
+    }
+  };
+
+  const shown = (posts ?? []).filter((p) => !isPendingDelete(p.id));
 
   return (
     <div>
@@ -59,7 +89,7 @@ export function PostsView() {
           {TABS.map((t) => (
             <button key={t.key} aria-pressed={tab === t.key} onClick={() => setTab(t.key)} className="whitespace-nowrap">
               {t.label}
-              {posts && counts[t.key] > 0 && <span className={`ml-1.5 text-xs ${t.key === "failed" ? "text-bad" : "text-muted"}`}>{counts[t.key]}</span>}
+              {counts && counts[t.key] > 0 && <span className={`ml-1.5 text-xs ${t.key === "failed" ? "text-bad" : "text-muted"}`}>{counts[t.key]}</span>}
             </button>
           ))}
         </div>
@@ -68,13 +98,22 @@ export function PostsView() {
       {posts === null ? (
         <div className="flex justify-center py-10 text-muted"><Spinner size={20} /></div>
       ) : shown.length === 0 ? (
-        <Empty title="Nothing here yet">
+        <Empty title={search ? `Nothing matches “${search}”` : "Nothing here yet"}>
           <Link href="/compose" className="text-accent">Create a post</Link>
         </Empty>
       ) : (
-        <div className="grid gap-2 md:grid-cols-2">
-          {shown.map((p) => <PostRow key={p.id} post={p} showDate />)}
-        </div>
+        <>
+          <div className="grid gap-2 md:grid-cols-2">
+            {shown.map((p) => <PostRow key={p.id} post={p} showDate />)}
+          </div>
+          {posts.length < total && (
+            <div className="flex justify-center mt-4">
+              <button className="btn-ghost" disabled={loadingMore} onClick={loadMore}>
+                {loadingMore && <Spinner />} Show more ({total - posts.length} left)
+              </button>
+            </div>
+          )}
+        </>
       )}
     </div>
   );

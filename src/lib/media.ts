@@ -16,6 +16,7 @@ export interface MediaRow {
   kind: "image" | "video";
   created_at: number;
   purged_at?: number | null;
+  thumb_file?: string | null;
 }
 
 export const EXT_BY_MIME: Record<string, string> = {
@@ -40,6 +41,7 @@ export function toMediaItem(r: MediaRow): MediaItem {
   return {
     id: r.id,
     url: `/media/${r.file_name}`,
+    thumbUrl: r.thumb_file ? `/media/${r.thumb_file}` : null,
     originalName: r.original_name,
     mime: r.mime,
     size: r.size,
@@ -61,19 +63,51 @@ export function mediaFilePath(r: Pick<MediaRow, "file_name">): string {
   return path.join(config.mediaDir, path.basename(r.file_name));
 }
 
+const PENDING = "('draft','scheduled','publishing','failed')";
+
+/** Unpublished posts per media id, in one pass (media attached to posts plus thumbnails/covers). */
+function pendingUsage(): Map<string, number> {
+  const rows = db()
+    .prepare(
+      `WITH uses AS (
+         SELECT pm.media_id AS mid, pm.post_id FROM post_media pm
+           WHERE EXISTS (SELECT 1 FROM post_targets t WHERE t.post_id = pm.post_id AND t.status IN ${PENDING})
+         UNION SELECT json_extract(options, '$.thumbnailMediaId'), post_id FROM post_targets WHERE status IN ${PENDING}
+         UNION SELECT json_extract(options, '$.coverMediaId'), post_id FROM post_targets WHERE status IN ${PENDING}
+       )
+       SELECT mid, COUNT(DISTINCT post_id) AS n FROM uses WHERE mid IS NOT NULL GROUP BY mid`,
+    )
+    .all() as { mid: string; n: number }[];
+  return new Map(rows.map((r) => [r.mid, r.n]));
+}
+
 export function listMedia(): MediaItem[] {
+  const usage = pendingUsage();
   return (db().prepare("SELECT * FROM media WHERE purged_at IS NULL ORDER BY created_at DESC").all() as MediaRow[]).map((r) => ({
     ...toMediaItem(r),
-    pendingPosts: mediaInUse(r.id),
+    pendingPosts: usage.get(r.id) ?? 0,
   }));
+}
+
+export function countMedia(): number {
+  return (db().prepare("SELECT COUNT(*) AS n FROM media WHERE purged_at IS NULL").get() as { n: number }).n;
 }
 
 export function getMediaRow(id: string): MediaRow | undefined {
   return db().prepare("SELECT * FROM media WHERE id = ?").get(id) as MediaRow | undefined;
 }
 
-export function getMediaRowByFile(fileName: string): MediaRow | undefined {
-  return db().prepare("SELECT * FROM media WHERE file_name = ? AND purged_at IS NULL").get(fileName) as MediaRow | undefined;
+/** Resolves a public file name: the original (until purged) or its thumbnail (kept after purge). */
+export function resolveMediaFile(fileName: string): { row: MediaRow; thumb: boolean } | undefined {
+  const row = db().prepare("SELECT * FROM media WHERE file_name = ? OR thumb_file = ?").get(fileName, fileName) as MediaRow | undefined;
+  if (!row) return undefined;
+  const thumb = row.thumb_file === fileName;
+  if (!thumb && row.purged_at != null) return undefined;
+  return { row, thumb };
+}
+
+export function setThumb(id: string, thumbFile: string) {
+  db().prepare("UPDATE media SET thumb_file = ? WHERE id = ?").run(thumbFile, id);
 }
 
 export function getMediaRows(ids: string[]): MediaRow[] {
@@ -121,6 +155,7 @@ export function deleteMedia(id: string): boolean {
     db().prepare("DELETE FROM media WHERE id = ?").run(id);
   })();
   fs.rm(mediaFilePath(row), { force: true }, () => {});
+  if (row.thumb_file) fs.rm(mediaFilePath({ file_name: row.thumb_file }), { force: true }, () => {});
   return true;
 }
 
@@ -149,10 +184,11 @@ export function purgePublishedMedia(postId?: string): number {
           .all()
   ) as { id: string | null }[];
   let n = 0;
+  const usage = pendingUsage();
   for (const { id } of candidates) {
     if (!id) continue;
     const row = getMediaRow(id);
-    if (!row || row.purged_at != null || mediaInUse(id) > 0) continue;
+    if (!row || row.purged_at != null || (usage.get(id) ?? 0) > 0) continue;
     fs.rmSync(mediaFilePath(row), { force: true });
     db().prepare("UPDATE media SET purged_at = ? WHERE id = ?").run(Date.now(), id);
     n++;

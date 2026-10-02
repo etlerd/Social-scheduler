@@ -24,6 +24,8 @@ export type PostStatus = "draft" | "scheduled" | "publishing" | "published" | "p
 export interface MediaItem {
   id: string;
   url: string;
+  /** Small JPEG preview; survives after the original is deleted. */
+  thumbUrl: string | null;
   originalName: string;
   mime: string;
   size: number;

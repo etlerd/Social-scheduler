@@ -4,9 +4,12 @@ import { useCallback, useState } from "react";
 import type { MediaItem } from "@/lib/types";
 
 const MAX_JPEG = 8 * 1024 * 1024;
+const THUMB_EDGE = 480;
 
 interface Prepared {
   blob: Blob;
+  /** ~480px JPEG preview for grids; null when the browser couldn't decode the file. */
+  thumb: Blob | null;
   name: string;
   width: number | null;
   height: number | null;
@@ -39,36 +42,55 @@ export async function prepareFile(file: File): Promise<Prepared> {
     } catch {
       throw new Error(`${file.name}: this browser can't read that image format. Export it as JPEG or PNG.`);
     }
-    let out: Prepared = { blob: file, name: file.name, width: bmp.width, height: bmp.height, duration: null };
+    const thumb = (await canvasToJpeg(bmp, THUMB_EDGE, 0.8).catch(() => null))?.blob ?? null;
+    let out: Prepared = { blob: file, thumb, name: file.name, width: bmp.width, height: bmp.height, duration: null };
     if (file.type !== "image/jpeg" || file.size > MAX_JPEG) {
       let enc = await canvasToJpeg(bmp, 4096, 0.92);
       if (enc.blob.size > MAX_JPEG) enc = await canvasToJpeg(bmp, 2880, 0.85);
-      out = { ...enc, name: file.name.replace(/\.[^.]+$/, "") + ".jpg", duration: null };
+      out = { ...enc, thumb, name: file.name.replace(/\.[^.]+$/, "") + ".jpg", duration: null };
     }
     bmp.close();
     return out;
   }
   if (file.type.startsWith("video/") || /\.(mp4|mov|webm|mkv)$/i.test(file.name)) {
-    const meta = await new Promise<{ width: number | null; height: number | null; duration: number | null }>((resolve) => {
+    type Meta = { width: number | null; height: number | null; duration: number | null; thumb: Blob | null };
+    const meta = await new Promise<Meta>((resolve) => {
       const v = document.createElement("video");
       const url = URL.createObjectURL(file);
-      const done = (r: { width: number | null; height: number | null; duration: number | null }) => {
+      let settled = false;
+      let partial: Meta = { width: null, height: null, duration: null, thumb: null };
+      const done = (r: Meta) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(t);
         URL.revokeObjectURL(url);
+        v.removeAttribute("src");
+        v.load();
         resolve(r);
       };
-      const t = setTimeout(() => done({ width: null, height: null, duration: null }), 15000);
-      v.preload = "metadata";
+      const t = setTimeout(() => done(partial), 15000);
+      v.preload = "auto";
+      v.muted = true;
+      v.playsInline = true;
       v.onloadedmetadata = () => {
-        clearTimeout(t);
-        done({ width: v.videoWidth || null, height: v.videoHeight || null, duration: Number.isFinite(v.duration) ? v.duration : null });
+        partial = { width: v.videoWidth || null, height: v.videoHeight || null, duration: Number.isFinite(v.duration) ? v.duration : null, thumb: null };
+        // Grab a frame a little way in (the first frame is often black).
+        v.currentTime = Math.min(1, (partial.duration ?? 0) * 0.1);
       };
-      v.onerror = () => {
-        clearTimeout(t);
-        done({ width: null, height: null, duration: null });
+      v.onseeked = () => {
+        if (!v.videoWidth) return done(partial);
+        const scale = Math.min(1, THUMB_EDGE / Math.max(v.videoWidth, v.videoHeight));
+        const c = document.createElement("canvas");
+        c.width = Math.round(v.videoWidth * scale);
+        c.height = Math.round(v.videoHeight * scale);
+        c.getContext("2d")!.drawImage(v, 0, 0, c.width, c.height);
+        c.toBlob((b) => done({ ...partial, thumb: b }), "image/jpeg", 0.8);
       };
+      v.onerror = () => done(partial);
       v.src = url;
     });
-    return { blob: file, name: file.name, ...meta };
+    const { thumb, ...dims } = meta;
+    return { blob: file, thumb, name: file.name, ...dims };
   }
   throw new Error(`${file.name}: only images and videos are supported.`);
 }
@@ -88,7 +110,14 @@ export function uploadPrepared(p: Prepared, onProgress: (f: number) => void): Pr
       try {
         body = JSON.parse(xhr.responseText);
       } catch {}
-      if (xhr.status >= 200 && xhr.status < 300) resolve(body.media);
+      if (xhr.status >= 200 && xhr.status < 300) {
+        const media = body.media as MediaItem;
+        if (!p.thumb) return resolve(media);
+        fetch(`/api/media/${media.id}/thumb`, { method: "PUT", headers: { "Content-Type": "image/jpeg" }, body: p.thumb })
+          .then((r) => (r.ok ? r.json() : null))
+          .then((t) => resolve(t?.thumbUrl ? { ...media, thumbUrl: t.thumbUrl } : media))
+          .catch(() => resolve(media));
+      }
       else reject(new Error(body.error || `Upload failed (${xhr.status})`));
     };
     xhr.onerror = () => reject(new Error("Network error during upload"));

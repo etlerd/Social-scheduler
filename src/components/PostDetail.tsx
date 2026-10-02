@@ -41,7 +41,7 @@ export function PostDetail({ id }: { id: string }) {
   useEffect(() => {
     if (!post) return;
     const active = post.targets.some((t) => t.status === "publishing" || (t.status === "scheduled" && (t.dispatchAt ?? Infinity) < Date.now() + 60_000));
-    const t = setInterval(load, active ? 3000 : 20000);
+    const t = setInterval(() => !document.hidden && load(), active ? 3000 : 20000);
     return () => clearInterval(t);
   }, [post, load]);
 
