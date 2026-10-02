@@ -41,6 +41,96 @@ function dotColor(p: Post) {
   return "bg-accent";
 }
 
+interface Setup {
+  accounts: boolean;
+  media: boolean;
+  posts: boolean;
+  done: boolean;
+}
+
+function GettingStarted({ setup }: { setup: Setup }) {
+  const steps = [
+    { done: setup.accounts, title: "Connect Instagram or YouTube", href: "/accounts", cta: "Connect" },
+    { done: setup.media, title: "Upload a photo or video", href: "/media", cta: "Upload" },
+    { done: setup.posts, title: "Schedule your first post", href: "/compose", cta: "Create post" },
+  ];
+  const next = steps.findIndex((s) => !s.done);
+  return (
+    <section className="card p-4 mb-4">
+      <div className="flex items-baseline justify-between mb-3">
+        <h2 className="font-semibold">Get set up</h2>
+        <span className="text-xs text-muted tabular-nums">{steps.filter((s) => s.done).length} of 3 done</span>
+      </div>
+      <ol className="grid gap-2 sm:grid-cols-3">
+        {steps.map((s, i) => (
+          <li key={s.title} className={`flex items-center gap-3 rounded-xl px-3 py-2.5 ${i === next ? "bg-accent/8 ring-1 ring-accent/30" : "bg-surface-2"}`}>
+            <span className={`grid place-items-center w-6 h-6 rounded-full text-xs font-semibold shrink-0 ${s.done ? "bg-ok text-white" : i === next ? "bg-accent text-accent-ink" : "bg-line text-muted"}`}>
+              {s.done ? "✓" : i + 1}
+            </span>
+            <span className={`text-sm flex-1 min-w-0 ${s.done ? "text-muted line-through" : ""}`}>{s.title}</span>
+            {i === next && <Link href={s.href} className="btn-primary btn-sm shrink-0">{s.cta}</Link>}
+          </li>
+        ))}
+      </ol>
+    </section>
+  );
+}
+
+/** Next 60 days as a list grouped by day. */
+function AgendaList() {
+  const [posts, setPosts] = useState<Post[] | null>(null);
+  useEffect(() => {
+    const load = () => {
+      const d = new Date();
+      const from = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+      api<{ posts: Post[] }>(`/api/posts?from=${from}&to=${from + 60 * 86400_000}`).then((r) => setPosts(r.posts)).catch(() => {});
+    };
+    load();
+    const t = setInterval(load, 20000);
+    return () => clearInterval(t);
+  }, []);
+  if (posts === null) return <div className="text-muted flex justify-center py-10"><Spinner /></div>;
+  if (!posts.length) {
+    return (
+      <div className="card p-10 text-center">
+        <p className="font-medium">Nothing in the next 60 days</p>
+        <Link href="/compose" className="text-sm text-accent mt-2 inline-block">Create a post</Link>
+      </div>
+    );
+  }
+  const groups: [string, Post[]][] = [];
+  for (const p of posts) {
+    const k = dayKey(p.scheduledAt!);
+    const g = groups.find(([key]) => key === k);
+    if (g) g[1].push(p);
+    else groups.push([k, [p]]);
+  }
+  return (
+    <div className="space-y-6">
+      {groups.map(([k, list]) => {
+        const d = new Date(list[0].scheduledAt!);
+        return (
+          <section key={k} className="grid gap-2 md:grid-cols-[140px_minmax(0,1fr)] md:gap-4">
+            <h2 className="md:pt-3 flex md:flex-col items-baseline gap-2 md:gap-0">
+              <span className="font-semibold">{relativeDay(d)}</span>
+              <span className="text-xs text-muted">{d.toLocaleDateString(undefined, { month: "short", day: "numeric" })} · {list.length} post{list.length > 1 ? "s" : ""}</span>
+            </h2>
+            <div className="grid gap-2">{list.map((p) => <PostRow key={p.id} post={p} />)}</div>
+          </section>
+        );
+      })}
+    </div>
+  );
+}
+
+function relativeDay(d: Date): string {
+  const t = new Date();
+  const diff = Math.round((new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime() - new Date(t.getFullYear(), t.getMonth(), t.getDate()).getTime()) / 86400_000);
+  if (diff === 0) return "Today";
+  if (diff === 1) return "Tomorrow";
+  return d.toLocaleDateString(undefined, { weekday: "long" });
+}
+
 function relativeWhen(ms: number): string {
   const d = new Date(ms);
   const today = new Date();
@@ -63,6 +153,19 @@ export function CalendarView() {
   const [error, setError] = useState("");
   const [dragId, setDragId] = useState<string | null>(null);
   const [overview, setOverview] = useState<{ next: Post | null; week: number; failed: number } | null>(null);
+  const [setup, setSetup] = useState<Setup | null>(null);
+  const [view, setView] = useState<"month" | "list">("month");
+  useEffect(() => {
+    try {
+      if (localStorage.getItem("calendar-view") === "list") setView("list");
+    } catch {}
+  }, []);
+  const switchView = (v: "month" | "list") => {
+    setView(v);
+    try {
+      localStorage.setItem("calendar-view", v);
+    } catch {}
+  };
 
   useEffect(() => setWeekStart(firstDayOfWeek()), []);
 
@@ -87,6 +190,12 @@ export function CalendarView() {
       const now = Date.now();
       const { posts: all } = await api<{ posts: Post[] }>("/api/posts");
       const upcoming = all.filter((p) => p.scheduledAt != null && p.scheduledAt > now && (p.status === "scheduled" || p.status === "publishing")).sort((a, b) => a.scheduledAt! - b.scheduledAt!);
+      const [{ accounts }, { media }] = await Promise.all([
+        api<{ accounts: unknown[] }>("/api/accounts"),
+        api<{ media: unknown[] }>("/api/media"),
+      ]);
+      const st = { accounts: accounts.length > 0, media: media.length > 0 || all.some((p) => p.media.length > 0), posts: all.some((p) => p.status !== "draft") };
+      setSetup({ ...st, done: st.accounts && st.media && st.posts });
       setOverview({
         next: upcoming[0] ?? null,
         week: upcoming.filter((p) => p.scheduledAt! < now + 7 * 86400_000).length,
@@ -143,9 +252,14 @@ export function CalendarView() {
   return (
     <div>
       <PageHeader
-        title={month.toLocaleDateString(undefined, { month: "long", year: "numeric" })}
+        title={view === "list" ? "Upcoming" : month.toLocaleDateString(undefined, { month: "long", year: "numeric" })}
         actions={
           <>
+            <div className="seg">
+              <button aria-pressed={view === "month"} onClick={() => switchView("month")}>Month</button>
+              <button aria-pressed={view === "list"} onClick={() => switchView("list")}>List</button>
+            </div>
+            {view === "month" && <>
             <button className="btn-ghost btn-sm" onClick={() => { const d = new Date(); setMonth(new Date(d.getFullYear(), d.getMonth(), 1)); setSelected(dayKey(d.getTime())); }}>
               Today
             </button>
@@ -155,6 +269,7 @@ export function CalendarView() {
             <button className="btn-ghost btn-sm px-2" onClick={() => shift(1)} aria-label="Next month">
               <IconChevron size={16} />
             </button>
+            </>}
           </>
         }
       />
@@ -164,33 +279,31 @@ export function CalendarView() {
         </p>
       )}
 
-      {overview && (
-        <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto] mb-4">
+      {setup && !setup.done && <GettingStarted setup={setup} />}
+
+      {overview && (overview.next || overview.failed > 0) && (
+        <div className="card flex items-center gap-3 px-4 py-3 mb-4 min-w-0">
           {overview.next ? (
-            <Link href={`/posts/${overview.next.id}`} className="card flex items-center gap-3 px-4 py-3 min-w-0 hover:border-muted/40">
-              <span className="text-xs font-medium text-muted uppercase tracking-wide shrink-0">Next</span>
+            <Link href={`/posts/${overview.next.id}`} className="flex items-center gap-3 min-w-0 flex-1 hover:opacity-80">
+              <span className="text-[11px] font-semibold text-muted uppercase tracking-wider shrink-0">Next</span>
               <span className="text-sm tabular-nums shrink-0">{relativeWhen(overview.next.scheduledAt!)}</span>
               <span className="text-sm font-medium truncate">{postLabel(overview.next)}</span>
-              <span className="ml-auto flex -space-x-1 shrink-0">{platformsOf(overview.next).map((pl) => <PlatformIcon key={pl} platform={pl} size={16} />)}</span>
+              <span className="hidden sm:flex -space-x-1 shrink-0">{platformsOf(overview.next).map((pl) => <PlatformIcon key={pl} platform={pl} size={16} />)}</span>
             </Link>
           ) : (
-            <Link href="/compose" className="card flex items-center gap-3 px-4 py-3 text-sm text-muted hover:border-muted/40">
-              Nothing scheduled. <span className="text-accent">Create a post</span>
-            </Link>
+            <span className="text-sm text-muted flex-1">Nothing scheduled.</span>
           )}
-          <div className="flex gap-2">
-            <span className="card flex items-center gap-2 px-4 py-3 text-sm whitespace-nowrap">
-              <span className="font-semibold tabular-nums">{overview.week}</span> <span className="text-muted">next 7 days</span>
-            </span>
-            {overview.failed > 0 && (
-              <Link href="/posts?tab=failed" className="card flex items-center gap-2 px-4 py-3 text-sm whitespace-nowrap border-bad/40 bg-bad/8 text-bad hover:bg-bad/12">
-                <span className="font-semibold tabular-nums">{overview.failed}</span> failed
-              </Link>
-            )}
-          </div>
+          <span className="hidden sm:inline chip bg-surface-2 text-muted shrink-0"><b className="text-ink tabular-nums">{overview.week}</b> next 7 days</span>
+          {overview.failed > 0 && (
+            <Link href="/posts?tab=failed" className="chip bg-bad/12 text-bad shrink-0 hover:bg-bad/20"><b className="tabular-nums">{overview.failed}</b> failed</Link>
+          )}
         </div>
       )}
 
+      {view === "list" ? (
+        <AgendaList />
+      ) : (
+      <>
       <div className="card overflow-hidden">
         <div className="grid grid-cols-7 border-b border-line text-[11px] md:text-xs text-muted">
           {weekdays.map((w) => (
@@ -287,6 +400,8 @@ export function CalendarView() {
           </div>
         )}
       </section>
+      </>
+      )}
     </div>
   );
 }

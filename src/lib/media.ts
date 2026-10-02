@@ -62,7 +62,10 @@ export function mediaFilePath(r: Pick<MediaRow, "file_name">): string {
 }
 
 export function listMedia(): MediaItem[] {
-  return (db().prepare("SELECT * FROM media WHERE purged_at IS NULL ORDER BY created_at DESC").all() as MediaRow[]).map(toMediaItem);
+  return (db().prepare("SELECT * FROM media WHERE purged_at IS NULL ORDER BY created_at DESC").all() as MediaRow[]).map((r) => ({
+    ...toMediaItem(r),
+    pendingPosts: mediaInUse(r.id),
+  }));
 }
 
 export function getMediaRow(id: string): MediaRow | undefined {

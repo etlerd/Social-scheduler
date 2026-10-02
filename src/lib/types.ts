@@ -34,6 +34,8 @@ export interface MediaItem {
   createdAt: number;
   /** File was deleted from the server after publishing. */
   purged: boolean;
+  /** Unpublished posts that use this file (library listing only). */
+  pendingPosts?: number;
 }
 
 export type YtPrivacy = "public" | "unlisted" | "private";

@@ -9,6 +9,8 @@ import type { Post } from "@/lib/types";
 import { PageHeader } from "./AppShell";
 import { IconExternal } from "./icons";
 import { AccountAvatar, Banner, MediaThumb, Spinner, StatusBadge } from "./ui";
+import { toast } from "./toast";
+import { TargetPreview } from "./Previews";
 import { effectiveTargetStatus, postLabel, targetLabel } from "./postUtil";
 
 export function PostDetail({ id }: { id: string }) {
@@ -64,7 +66,7 @@ export function PostDetail({ id }: { id: string }) {
         <div className="flex flex-wrap gap-2 w-full sm:w-auto sm:ml-auto">
           {post.editable && <Link href={`/compose?id=${post.id}`} className="btn-primary btn-sm">Edit</Link>}
           {hasFailed && (
-            <button className="btn-ghost btn-sm" disabled={busy} onClick={() => act(async () => { setPost((await api<{ post: Post }>(`/api/posts/${id}/retry`, { method: "POST" })).post); })}>
+            <button className="btn-ghost btn-sm" disabled={busy} onClick={() => act(async () => { setPost((await api<{ post: Post }>(`/api/posts/${id}/retry`, { method: "POST" })).post); toast("Retrying now"); })}>
               Retry failed
             </button>
           )}
@@ -76,7 +78,7 @@ export function PostDetail({ id }: { id: string }) {
               const msg = anyLive
                 ? "Remove this post from the scheduler? It stays live on Instagram/YouTube; delete it there separately."
                 : "Delete this post? This can't be undone.";
-              if (confirm(msg)) act(async () => { await api(`/api/posts/${id}`, { method: "DELETE" }); router.replace("/posts"); });
+              if (confirm(msg)) act(async () => { await api(`/api/posts/${id}`, { method: "DELETE" }); toast(anyLive ? "Removed from the scheduler. Live posts stay on Instagram/YouTube." : "Post deleted"); router.replace("/posts"); });
             }}
           >
             Delete
@@ -120,6 +122,22 @@ export function PostDetail({ id }: { id: string }) {
                 <a href={t.externalUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-sm text-accent mt-3">
                   Open on {t.contentType.startsWith("ig_") ? "Instagram" : "YouTube"} <IconExternal size={14} />
                 </a>
+              )}
+              {t.account && (
+                <details className="mt-3 group">
+                  <summary className="text-xs text-muted cursor-pointer">Preview</summary>
+                  <div className="mt-3 max-w-sm">
+                    <TargetPreview
+                      contentType={t.contentType}
+                      account={t.account}
+                      options={t.options}
+                      caption={post.caption}
+                      media={post.media}
+                      lookup={(mid) => post.media.find((m) => m.id === mid)}
+                      scheduledAt={post.scheduledAt}
+                    />
+                  </div>
+                </details>
               )}
               {t.events && t.events.length > 0 && (
                 <details className="mt-3">

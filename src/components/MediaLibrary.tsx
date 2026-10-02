@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import { api } from "@/lib/client";
 import { fmtBytes, fmtDuration } from "@/lib/format";
 import type { MediaItem } from "@/lib/types";
@@ -17,6 +18,9 @@ export function MediaLibrary() {
   const [error, setError] = useState("");
   const [dragOver, setDragOver] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
+  const router = useRouter();
+  const [selecting, setSelecting] = useState(false);
+  const [sel, setSel] = useState<string[]>([]);
   const { jobs, upload, dismiss } = useUploader(useCallback((m: MediaItem) => setItems((xs) => [m, ...(xs ?? [])]), []));
 
   useEffect(() => {
@@ -47,6 +51,7 @@ export function MediaLibrary() {
         title="Media"
         actions={
           <>
+            <button className="btn-ghost btn-sm md:h-10 md:px-4 md:text-sm" onClick={() => { setSelecting((v) => !v); setSel([]); }}>{selecting ? "Cancel" : "Select"}</button>
             <button className="btn-primary btn-sm md:h-10 md:px-4 md:text-sm" onClick={() => fileRef.current?.click()}><IconUpload size={16} /> Upload</button>
             <input ref={fileRef} type="file" hidden multiple accept="image/*,video/*" onChange={(e) => { if (e.target.files) upload(e.target.files); e.target.value = ""; }} />
           </>
@@ -66,10 +71,30 @@ export function MediaLibrary() {
       ) : (
         <div className="grid grid-cols-3 sm:grid-cols-4 lg:grid-cols-6 gap-2">
           {shown.map((m) => (
-            <button key={m.id} onClick={() => setOpen(m)} className="rounded-xl overflow-hidden">
+            <button
+              key={m.id}
+              onClick={() => (selecting ? setSel((s) => (s.includes(m.id) ? s.filter((x) => x !== m.id) : [...s, m.id])) : setOpen(m))}
+              className={`relative rounded-xl overflow-hidden ring-2 ${sel.includes(m.id) ? "ring-accent" : "ring-transparent"}`}
+              aria-pressed={selecting ? sel.includes(m.id) : undefined}
+            >
               <MediaThumb media={m} className="aspect-square" />
+              {selecting && (
+                <span className={`absolute top-1.5 right-1.5 grid place-items-center w-6 h-6 rounded-full text-xs font-semibold border-2 ${sel.includes(m.id) ? "bg-accent border-accent text-accent-ink" : "border-white/90 bg-black/30"}`}>
+                  {sel.includes(m.id) ? sel.indexOf(m.id) + 1 : ""}
+                </span>
+              )}
+              {!selecting && (m.pendingPosts ?? 0) > 0 && (
+                <span className="absolute top-1.5 left-1.5 chip h-5 px-1.5 bg-black/60 text-white text-[10px]">In {m.pendingPosts} post{m.pendingPosts! > 1 ? "s" : ""}</span>
+              )}
             </button>
           ))}
+        </div>
+      )}
+      {selecting && sel.length > 0 && (
+        <div className="sticky bottom-20 md:bottom-4 z-30 mt-4 card p-3 flex items-center gap-2 shadow-lg">
+          <span className="text-sm flex-1">{sel.length} selected</span>
+          <button className="btn-ghost btn-sm" onClick={() => setSel([])}>Clear</button>
+          <button className="btn-primary btn-sm" onClick={() => router.push(`/compose?media=${sel.join(",")}`)}>New post with {sel.length}</button>
         </div>
       )}
       <Sheet open={!!open} onClose={() => setOpen(null)} title={open?.originalName ?? ""} wide>
@@ -89,7 +114,14 @@ export function MediaLibrary() {
               <div><dt className="text-muted text-xs">Dimensions</dt><dd>{open.width && open.height ? `${open.width}×${open.height}` : "—"}</dd></div>
               <div><dt className="text-muted text-xs">Duration</dt><dd>{open.duration ? fmtDuration(open.duration) : "—"}</dd></div>
             </dl>
-            <button className="btn-danger" onClick={() => remove(open)}><IconTrash size={16} /> Delete</button>
+            <div className="flex flex-wrap gap-2">
+              <button className="btn-primary" onClick={() => router.push(`/compose?media=${open.id}`)}>New post with this</button>
+              {(open.pendingPosts ?? 0) > 0 ? (
+                <p className="text-xs text-muted self-center">Used by {open.pendingPosts} unpublished post{open.pendingPosts! > 1 ? "s" : ""}; deleted automatically after {open.pendingPosts! > 1 ? "they go" : "it goes"} out.</p>
+              ) : (
+                <button className="btn-danger" onClick={() => remove(open)}><IconTrash size={16} /> Delete</button>
+              )}
+            </div>
           </div>
         )}
       </Sheet>

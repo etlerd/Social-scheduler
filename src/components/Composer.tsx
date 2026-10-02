@@ -4,15 +4,17 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, ClientError } from "@/lib/client";
-import { fmtBytes, fmtDateTime, fmtDuration, fromLocalInput, ratioLabel, timeZoneName, toLocalInput } from "@/lib/format";
+import { fmtBytes, fmtDateTime, fmtDuration, fmtTime, fromLocalInput, ratioLabel, timeZoneName, toLocalInput } from "@/lib/format";
 import { CONTENT_TYPES, PLATFORM_TYPES, SCHEDULE_ERRORS, YT_CATEGORIES, countHashtags, defaultOptions, mediaProblems, tagsLength, usesNativeSchedule, validateTarget } from "@/lib/rules";
 import type { AccountSummary, ContentType, Issue, MediaItem, Platform, Post, PostInput, TargetOptions } from "@/lib/types";
 import { PageHeader } from "./AppShell";
-import { IconChevron, IconEye, IconImage, IconUpload, IconX } from "./icons";
+import { IconChevron, IconEye, IconImage, IconUpload, IconX, PlatformIcon } from "./icons";
+import { platformsOf, postLabel } from "./postUtil";
 import { MediaPicker, UploadJobs } from "./MediaPicker";
 import { TargetPreview } from "./Previews";
 import { AccountAvatar, Banner, MediaThumb, Sheet, Spinner } from "./ui";
 import { useUploader } from "./upload";
+import { toast } from "./toast";
 
 interface TargetState {
   contentType: ContentType;
@@ -45,7 +47,22 @@ function defaultWhen(date?: string): string {
   return toLocalInput(t.getTime());
 }
 
-export function Composer({ editId, duplicateId, date }: { editId?: string; duplicateId?: string; date?: string }) {
+function quickTimes(now = new Date()): { label: string; ms: number }[] {
+  const y = now.getFullYear(), m = now.getMonth(), d = now.getDate();
+  const daysToMon = ((8 - now.getDay()) % 7) || 7;
+  return [
+    { label: "In 1 hour", ms: Math.ceil((now.getTime() + 3600_000) / 300_000) * 300_000 },
+    { label: `Tomorrow ${fmtHour(9)}`, ms: new Date(y, m, d + 1, 9).getTime() },
+    { label: `Tomorrow ${fmtHour(18)}`, ms: new Date(y, m, d + 1, 18).getTime() },
+    { label: `Mon ${fmtHour(9)}`, ms: new Date(y, m, d + daysToMon, 9).getTime() },
+  ];
+}
+
+function fmtHour(h: number) {
+  return new Date(2000, 0, 1, h).toLocaleTimeString(undefined, { hour: "numeric" });
+}
+
+export function Composer({ editId, duplicateId, date, mediaParam }: { editId?: string; duplicateId?: string; date?: string; mediaParam?: string }) {
   const router = useRouter();
   const [accounts, setAccounts] = useState<AccountSummary[] | null>(null);
   const [library, setLibrary] = useState<MediaItem[]>([]);
@@ -68,10 +85,21 @@ export function Composer({ editId, duplicateId, date }: { editId?: string; dupli
   const fileRef = useRef<HTMLInputElement>(null);
 
   const touch = () => (dirty.current = true);
+  const [sameDay, setSameDay] = useState<Post[]>([]);
+  const quick = useMemo(() => quickTimes(), []);
 
   useEffect(() => {
     api<{ accounts: AccountSummary[] }>("/api/accounts").then((r) => setAccounts(r.accounts)).catch((e) => setError(e.message));
-    api<{ media: MediaItem[] }>("/api/media").then((r) => setLibrary(r.media)).catch(() => {});
+    api<{ media: MediaItem[] }>("/api/media")
+      .then((r) => {
+        setLibrary(r.media);
+        // Opened from the library with files preselected.
+        if (mediaParam && !editId && !duplicateId) {
+          const ids = mediaParam.split(",");
+          setMedia(ids.map((id) => r.media.find((m) => m.id === id)).filter((m): m is MediaItem => !!m));
+        }
+      })
+      .catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -133,6 +161,27 @@ export function Composer({ editId, duplicateId, date }: { editId?: string; dupli
 
   const lookup = useCallback((id: string) => library.find((m) => m.id === id) ?? media.find((m) => m.id === id), [library, media]);
   const scheduledAt = mode === "now" ? Date.now() : fromLocalInput(when);
+
+  useEffect(() => {
+    const t = fromLocalInput(when);
+    if (mode !== "schedule" || t == null) return setSameDay([]);
+    const d = new Date(t);
+    const from = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+    const ctl = new AbortController();
+    const timer = setTimeout(() => {
+      api<{ posts: Post[] }>(`/api/posts?from=${from}&to=${from + 86400_000}`, { signal: ctl.signal })
+        .then((r) => setSameDay(r.posts.filter((p) => p.id !== editId && p.status !== "draft")))
+        .catch(() => {});
+    }, 250);
+    return () => {
+      clearTimeout(timer);
+      ctl.abort();
+    };
+  }, [when, mode, editId]);
+  const selectedIds = Object.keys(targets);
+  const clash = scheduledAt != null && mode === "schedule"
+    ? sameDay.find((p) => p.scheduledAt != null && Math.abs(p.scheduledAt - scheduledAt) < 30 * 60_000 && p.targets.some((t) => selectedIds.includes(t.accountId)))
+    : undefined;
 
   const issues = useMemo(() => {
     const out: Record<string, Issue[]> = {};
@@ -197,6 +246,7 @@ export function Composer({ editId, duplicateId, date }: { editId?: string; dupli
     try {
       const r = await api<{ post: Post }>(editId ? `/api/posts/${editId}` : "/api/posts", { method: editId ? "PUT" : "POST", json: body });
       dirty.current = false;
+      toast(asDraft ? "Draft saved" : mode === "now" ? "Publishing now" : `Scheduled for ${fmtDateTime(r.post.scheduledAt!)}`);
       router.push(`/posts/${r.post.id}`);
     } catch (e) {
       setError((e as Error).message);
@@ -346,8 +396,41 @@ export function Composer({ editId, duplicateId, date }: { editId?: string; dupli
             </div>
             {mode === "schedule" && (
               <div>
+                <div className="flex flex-wrap gap-1.5 mb-2.5">
+                  {quick.map((q) => {
+                    const on = fromLocalInput(when) === q.ms;
+                    return (
+                      <button
+                        key={q.label}
+                        onClick={() => { touch(); setWhen(toLocalInput(q.ms)); }}
+                        className={`chip h-8 px-3 border ${on ? "border-accent bg-accent/10 text-accent" : "border-line bg-surface text-ink hover:bg-surface-2"}`}
+                      >
+                        {q.label}
+                      </button>
+                    );
+                  })}
+                </div>
                 <input type="datetime-local" className="input max-w-72" value={when} onChange={(e) => { touch(); setWhen(e.target.value); }} />
                 <p className="text-xs text-muted mt-1.5">{timeZoneName()}</p>
+                {sameDay.length > 0 && (
+                  <div className="mt-3 rounded-xl bg-surface-2 px-3 py-2.5 text-xs">
+                    <p className="text-muted mb-1.5">Already that day</p>
+                    <ul className="space-y-1">
+                      {sameDay.map((p) => (
+                        <li key={p.id} className="flex items-center gap-2 min-w-0">
+                          <span className="tabular-nums text-muted shrink-0 w-16">{fmtTime(p.scheduledAt!)}</span>
+                          <span className="truncate">{postLabel(p)}</span>
+                          <span className="ml-auto flex -space-x-1 shrink-0">{platformsOf(p).map((pl) => <PlatformIcon key={pl} platform={pl} size={13} />)}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+                {clash && (
+                  <p className="text-xs text-warn mt-2">
+                    &ldquo;{postLabel(clash)}&rdquo; goes to the same account at {fmtTime(clash.scheduledAt!)}. Posts this close together can compete for reach.
+                  </p>
+                )}
                 {whenError && <p className="text-xs text-bad mt-1.5">{whenError}</p>}
               </div>
             )}
