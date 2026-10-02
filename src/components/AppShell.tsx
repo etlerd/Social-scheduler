@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import type { ReactNode } from "react";
+import { Toaster } from "./toast";
 import { IconCalendar, IconImage, IconList, IconLogout, IconPlus, IconUsers } from "./icons";
 
 const NAV = [
@@ -50,6 +51,7 @@ export function AppShell({ children }: { children: ReactNode }) {
       </aside>
 
       <main className="mx-auto max-w-6xl px-4 pt-4 pb-28 md:px-8 md:pt-8 md:pb-12">{children}</main>
+      <Toaster />
 
       {/* Mobile tab bar */}
       <nav className="md:hidden fixed bottom-0 inset-x-0 z-40 border-t border-line bg-surface/95 backdrop-blur safe-bottom">
@@ -79,9 +81,9 @@ export function AppShell({ children }: { children: ReactNode }) {
 
 export function PageHeader({ title, actions }: { title: string; actions?: ReactNode }) {
   return (
-    <div className="flex items-center justify-between gap-3 mb-5 min-h-10">
+    <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-3 mb-5 min-h-10">
       <h1 className="text-xl md:text-2xl font-semibold tracking-tight">{title}</h1>
-      {actions && <div className="flex items-center gap-2">{actions}</div>}
+      {actions && <div className="flex flex-wrap items-center gap-2">{actions}</div>}
     </div>
   );
 }

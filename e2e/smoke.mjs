@@ -66,7 +66,8 @@ try {
   await shot(page, "desktop-post-detail");
   step("published media file is deleted from the server");
   await page.reload();
-  await page.getByText("Video deleted after publishing").waitFor();
+  // With a decodable video the preview survives; without one (headless Chromium lacks H.264) a placeholder shows.
+  await page.locator("[title='Original deleted after publishing']").or(page.getByText("Video deleted after publishing")).first().waitFor();
 
   step("validation blocks a PNG-free IG post without media");
   await page.goto(`${BASE}/compose`);
@@ -88,6 +89,17 @@ try {
   await page.waitForURL(/\/posts\/[\w-]+$/);
   await page.getByText("Scheduled", { exact: true }).first().waitFor();
 
+  step("large photo gets a small preview for grids");
+  await page.goto(`${BASE}/media`);
+  const up = page.waitForResponse((r) => r.url().includes("/thumb") && r.request().method() === "PUT");
+  await page.setInputFiles("input[type=file]", fx("photo-large.jpg"));
+  const thumbRes = await (await up).json();
+  const orig = fs.statSync(fx("photo-large.jpg")).size;
+  const thumbBytes = (await (await page.request.get(`${BASE}${thumbRes.thumbUrl}`)).body()).length;
+  console.log(`  original ${(orig / 1024).toFixed(0)} KB → grid preview ${(thumbBytes / 1024).toFixed(0)} KB`);
+  if (thumbBytes > 120 * 1024) throw new Error("thumbnail too big");
+  await page.locator(`img[src="${thumbRes.thumbUrl}"]`).waitFor();
+
   step("media library shows converted JPEG");
   await page.goto(`${BASE}/media`);
   await page.locator("button:has(img[alt='square.jpg'])").click();
@@ -106,12 +118,62 @@ try {
   await page.waitForURL(/\/posts\/[\w-]+$/);
   await page.locator("p.text-bad", { hasText: "Simulated platform error" }).waitFor({ timeout: 30000 });
   await page.getByText("Retry failed").waitFor();
+  await page.locator(".bg-bad\\/8 >> text=Retry").first().waitFor();
+
+  step("delete with undo");
+  await page.click("button:text-is('Delete')");
+  await page.waitForURL(/\/posts$/);
+  await page.click("button:has-text('All')");
+  if (await page.getByText("this one breaks").count()) throw new Error("pending delete still listed");
+  await page.click("[role=status] >> text=Undo");
+  await page.getByText("this one breaks").waitFor();
+
+  step("composer autosave survives in-app navigation; own caption per account");
+  await page.goto(`${BASE}/compose`);
+  await page.fill("#caption", "Half-written idea about pasta");
+  await page.locator("button[aria-pressed]", { hasText: "Demo IG" }).click();
+  await page.click("text=Write a different caption for this account");
+  await page.locator("textarea[id^=cap-]").fill("IG-only caption #pasta");
+  await page.waitForTimeout(900);
+  await page.click(".hidden.md\\:flex >> text=Posts");
+  await page.waitForURL(/\/posts$/);
+  await page.click(".hidden.md\\:flex >> text=New post");
+  await page.getByText(/You have unsaved work/).waitFor();
+  await page.click("button:text-is('Restore')");
+  if ((await page.inputValue("#caption")) !== "Half-written idea about pasta") throw new Error("caption not restored");
+  if ((await page.inputValue("textarea[id^=cap-]")) !== "IG-only caption #pasta") throw new Error("own caption not restored");
+  await page.getByText("1 account uses its own caption").waitFor();
 
   step("calendar + posts list");
   await page.goto(`${BASE}/`);
   if (tomorrow.getMonth() !== new Date().getMonth()) await page.click("[aria-label='Next month']");
   await page.getByText("Two looks, one day").first().waitFor();
   await shot(page, "desktop-calendar");
+  step("move a scheduled post from its page");
+  await page.locator("a", { hasText: "Two looks, one day" }).first().click();
+  await page.waitForURL(/\/posts\/[\w-]+$/);
+  await page.click("button:text-is('Move')");
+  await page.locator("button.chip", { hasText: /^Mon / }).click();
+  await page.click("button.btn-primary:text-is('Save')");
+  await page.locator("[role=status]", { hasText: "Moved to" }).waitFor();
+  await page.goto(`${BASE}/`);
+  step("list view, library multi-select, quick time picks");
+  await page.click(".seg >> text=List");
+  await page.getByRole("heading", { name: "Upcoming" }).waitFor();
+  await page.getByText("Two looks, one day").first().waitFor();
+  await shot(page, "desktop-list");
+  await page.click(".seg >> text=Month");
+  await page.goto(`${BASE}/media`);
+  await page.click("button:text-is('Select')");
+  await page.locator("main .grid button").nth(0).click();
+  await page.locator("main .grid button").nth(1).click();
+  await page.click("text=New post with 2");
+  await page.waitForURL(/compose\?media=/);
+  await page.getByText("· 2", { exact: true }).waitFor();
+  await page.locator("button[aria-pressed]", { hasText: "Demo IG" }).click();
+  await page.click("button.chip:text-is('In 1 hour')");
+  await page.locator("button.chip.text-accent", { hasText: "In 1 hour" }).waitFor();
+  await page.getByText(/· 1 destination/).waitFor();
   await page.goto(`${BASE}/posts`);
   await page.click("button:has-text('Needs attention')");
   await page.getByText("this one breaks").waitFor();
@@ -129,7 +191,7 @@ try {
   await mp.goto(`${BASE}/compose`);
   await mp.locator("button[aria-pressed]", { hasText: "Demo Channel" }).click();
   await mp.setInputFiles("section:has-text('Media') input[type=file]", fx("landscape.mp4"));
-  await mp.getByText(/1920×1080/).waitFor({ timeout: 30000 });
+  await mp.locator("main").getByText(/^16:9/).waitFor({ timeout: 30000 });
   await mp.fill("input[placeholder='Video title']", "Full tutorial");
   if (await mp.evaluate(() => document.documentElement.scrollWidth > window.innerWidth)) throw new Error("horizontal overflow on mobile composer");
   await shot(mp, "mobile-compose");

@@ -76,6 +76,8 @@ const MIGRATIONS: string[] = [
   CREATE INDEX target_events_target ON target_events (target_id);
   `,
   `ALTER TABLE media ADD COLUMN purged_at INTEGER;`,
+  `ALTER TABLE media ADD COLUMN thumb_file TEXT;
+   CREATE INDEX post_targets_account ON post_targets (account_id, status);`,
 ];
 
 function migrate(d: Database.Database) {

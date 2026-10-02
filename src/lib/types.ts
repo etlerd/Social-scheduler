@@ -24,6 +24,8 @@ export type PostStatus = "draft" | "scheduled" | "publishing" | "published" | "p
 export interface MediaItem {
   id: string;
   url: string;
+  /** Small JPEG preview; survives after the original is deleted. */
+  thumbUrl: string | null;
   originalName: string;
   mime: string;
   size: number;
@@ -34,11 +36,15 @@ export interface MediaItem {
   createdAt: number;
   /** File was deleted from the server after publishing. */
   purged: boolean;
+  /** Unpublished posts that use this file (library listing only). */
+  pendingPosts?: number;
 }
 
 export type YtPrivacy = "public" | "unlisted" | "private";
 
 export interface TargetOptions {
+  /** Caption for this account only; when unset the post's shared caption is used. */
+  caption?: string;
   // Instagram
   firstComment?: string;
   shareToFeed?: boolean;

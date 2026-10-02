@@ -101,6 +101,82 @@ function hydrate(posts: PostRow[], withEvents = false): Post[] {
   });
 }
 
+/** Post status computed in SQL; must match aggregateStatus(). */
+const STATUS_SQL = `
+  SELECT p.*, CASE
+    WHEN COALESCE(a.n, 0) = 0 OR a.d = a.n THEN 'draft'
+    WHEN a.pub > 0 THEN 'publishing'
+    WHEN a.f > 0 THEN CASE WHEN a.done > 0 THEN 'partial' ELSE 'failed' END
+    WHEN a.sch > 0 OR a.d > 0 THEN 'scheduled'
+    ELSE 'published' END AS status
+  FROM posts p LEFT JOIN (
+    SELECT post_id, COUNT(*) AS n, SUM(status = 'draft') AS d, SUM(status = 'publishing') AS pub, SUM(status = 'failed') AS f,
+           SUM(status IN ('published', 'platform_scheduled')) AS done, SUM(status = 'scheduled') AS sch
+    FROM post_targets GROUP BY post_id
+  ) a ON a.post_id = p.id`;
+
+export type PostView = "upcoming" | "drafts" | "published" | "failed" | "all";
+const VIEW_WHERE: Record<PostView, string> = {
+  upcoming: "status IN ('scheduled', 'publishing')",
+  drafts: "status = 'draft'",
+  published: "status = 'published'",
+  failed: "status IN ('failed', 'partial')",
+  all: "1 = 1",
+};
+
+/** One page of posts for a list tab, filtered and searched in SQL. */
+export function listPostsPage(q: { view: PostView; search?: string; offset?: number; limit?: number }): { posts: Post[]; total: number } {
+  const where = [VIEW_WHERE[q.view] ?? VIEW_WHERE.all];
+  const args: unknown[] = [];
+  const needle = q.search?.trim();
+  if (needle) {
+    where.push(`(caption LIKE ? ESCAPE '\\' OR id IN (SELECT post_id FROM post_targets WHERE json_extract(options, '$.title') LIKE ? ESCAPE '\\'))`);
+    const like = `%${needle.replace(/[\\%_]/g, (c) => "\\" + c)}%`;
+    args.push(like, like);
+  }
+  const order = q.view === "upcoming" ? "scheduled_at ASC" : "COALESCE(scheduled_at, updated_at) DESC";
+  const base = `WITH s AS (${STATUS_SQL}) SELECT * FROM s WHERE ${where.join(" AND ")}`;
+  const total = (db().prepare(`SELECT COUNT(*) AS n FROM (${base})`).get(...args) as { n: number }).n;
+  const rows = db()
+    .prepare(`${base} ORDER BY ${order} LIMIT ? OFFSET ?`)
+    .all(...args, Math.min(q.limit ?? 50, 200), q.offset ?? 0) as PostRow[];
+  return { posts: hydrate(rows), total };
+}
+
+/** Everything the calendar header and list tabs need, without shipping every post. */
+export function overview(now = Date.now()) {
+  // One pass over post statuses; next/week ride along as aggregates.
+  const rows = db()
+    .prepare(
+      `WITH s AS (${STATUS_SQL})
+       SELECT status, COUNT(*) AS n,
+              SUM(status IN ('scheduled', 'publishing') AND scheduled_at > @now AND scheduled_at < @week) AS week
+       FROM s GROUP BY status`,
+    )
+    .all({ now, week: now + 7 * 86400_000 }) as { status: string; n: number; week: number }[];
+  const by = (sts: string[]) => rows.filter((r) => sts.includes(r.status)).reduce((n, r) => n + r.n, 0);
+  const counts: Record<PostView, number> = {
+    upcoming: by(["scheduled", "publishing"]),
+    drafts: by(["draft"]),
+    published: by(["published"]),
+    failed: by(["failed", "partial"]),
+    all: rows.reduce((n, r) => n + r.n, 0),
+  };
+  const week = rows.reduce((n, r) => n + (r.week ?? 0), 0);
+  const nextRow = db()
+    .prepare(`WITH s AS (${STATUS_SQL}) SELECT * FROM s WHERE status IN ('scheduled', 'publishing') AND scheduled_at > ? ORDER BY scheduled_at LIMIT 1`)
+    .get(now) as PostRow | undefined;
+  const accounts = (db().prepare("SELECT COUNT(*) AS n FROM accounts").get() as { n: number }).n;
+  const media = (db().prepare("SELECT COUNT(*) AS n FROM media").get() as { n: number }).n;
+  return {
+    counts,
+    next: nextRow ? hydrate([nextRow])[0] : null,
+    week,
+    failed: counts.failed,
+    setup: { accounts: accounts > 0, media: media > 0, posts: counts.all - counts.drafts > 0 },
+  };
+}
+
 export function listPosts(q: { from?: number; to?: number } = {}): Post[] {
   let rows: PostRow[];
   if (q.from != null && q.to != null) {

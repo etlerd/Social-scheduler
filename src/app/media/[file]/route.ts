@@ -2,13 +2,14 @@
 // 128-bit random. Supports Range requests for video seeking and platform fetchers.
 import fs from "node:fs";
 import { Readable } from "node:stream";
-import { getMediaRowByFile, mediaFilePath } from "@/lib/media";
+import { mediaFilePath, resolveMediaFile } from "@/lib/media";
 
 export async function GET(req: Request, { params }: { params: Promise<{ file: string }> }) {
   const { file } = await params;
-  const row = /^[\w-]+\.\w+$/.test(file) ? getMediaRowByFile(file) : undefined;
-  if (!row) return new Response("Not found", { status: 404 });
-  const p = mediaFilePath(row);
+  const hit = /^[\w-]+(\.thumb)?\.\w+$/.test(file) ? resolveMediaFile(file) : undefined;
+  if (!hit) return new Response("Not found", { status: 404 });
+  const { row, thumb } = hit;
+  const p = mediaFilePath({ file_name: thumb ? row.thumb_file! : row.file_name });
   let stat: fs.Stats;
   try {
     stat = fs.statSync(p);
@@ -16,7 +17,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ file: st
     return new Response("Not found", { status: 404 });
   }
   const headers: Record<string, string> = {
-    "Content-Type": row.mime,
+    "Content-Type": thumb ? "image/jpeg" : row.mime,
     "Accept-Ranges": "bytes",
     "Cache-Control": "public, max-age=31536000, immutable",
   };

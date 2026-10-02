@@ -105,3 +105,41 @@ describe("media cleanup after publishing", () => {
     expect(() => savePost({ caption: "", mediaIds: [shared.id], mode: "draft", scheduledAt: null, targets: [] })).toThrow(/deleted after it was published/);
   });
 });
+
+describe("SQL-side listing", () => {
+  it("computes the same status as aggregateStatus for every target mix", async () => {
+    const { aggregateStatus, listPostsPage } = await import("./posts");
+    const ig = addAccount("instagram");
+    const yt = addAccount("youtube");
+    const statuses = ["draft", "scheduled", "publishing", "published", "platform_scheduled", "failed"] as const;
+    const expected = new Map<string, string>();
+    for (const a of statuses) {
+      for (const b of [...statuses, null]) {
+        const p = savePost({ caption: `${a}-${b}`, mediaIds: [], mode: "draft", scheduledAt: null, targets: [{ accountId: ig, contentType: "ig_image", options: {} }, ...(b ? [{ accountId: yt, contentType: "yt_live" as const, options: { title: "t" } }] : [])] });
+        const ts = getPost(p.id)!.targets;
+        db().prepare("UPDATE post_targets SET status = ? WHERE id = ?").run(a, ts[0].id);
+        if (b) db().prepare("UPDATE post_targets SET status = ? WHERE id = ?").run(b, ts[1].id);
+        expected.set(p.id, aggregateStatus(b ? [a, b] : [a]));
+      }
+    }
+    const views = { upcoming: ["scheduled", "publishing"], drafts: ["draft"], published: ["published"], failed: ["failed", "partial"] } as const;
+    for (const [view, sts] of Object.entries(views)) {
+      const got = new Set(listPostsPage({ view: view as never, limit: 200 }).posts.map((p) => p.id));
+      const want = new Set([...expected].filter(([, s]) => (sts as readonly string[]).includes(s)).map(([id]) => id));
+      expect(got).toEqual(want);
+    }
+    const { overview } = await import("./posts");
+    const o = overview();
+    for (const v of ["upcoming", "drafts", "published", "failed", "all"] as const) expect(o.counts[v]).toBe(listPostsPage({ view: v }).total);
+  });
+
+  it("searches captions and YouTube titles, with LIKE wildcards escaped", async () => {
+    const { listPostsPage } = await import("./posts");
+    const yt = addAccount("youtube");
+    savePost({ caption: "100% pasta", mediaIds: [], mode: "draft", scheduledAt: null, targets: [] });
+    savePost({ caption: "other", mediaIds: [], mode: "draft", scheduledAt: null, targets: [{ accountId: yt, contentType: "yt_live", options: { title: "Pasta live" } }] });
+    savePost({ caption: "1000 things", mediaIds: [], mode: "draft", scheduledAt: null, targets: [] });
+    expect(listPostsPage({ view: "all", search: "pasta" }).total).toBe(2);
+    expect(listPostsPage({ view: "all", search: "100%" }).posts.map((p) => p.caption)).toEqual(["100% pasta"]);
+  });
+});

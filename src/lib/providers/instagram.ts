@@ -5,7 +5,7 @@ import { accessTokenOf, saveTokens, type AccountRow } from "../accounts";
 import { config } from "../config";
 import { PublishError } from "../errors";
 import { publicMediaUrl, type MediaRow } from "../media";
-import { mediaForTarget } from "../rules";
+import { captionFor, mediaForTarget } from "../rules";
 import { bodyJson, call } from "./http";
 import type { PublishContext, PublishResult } from "./types";
 
@@ -125,7 +125,7 @@ async function waitForContainer(ctx: PublishContext, id: string, token: string, 
 async function createContainer(ctx: PublishContext, token: string): Promise<{ id: string; isVideo: boolean }> {
   const ig = ctx.account.external_id;
   const o = ctx.options;
-  const caption = ctx.post.caption || undefined;
+  const caption = captionFor(ctx.post.caption, o) || undefined;
   const ct = ctx.target.content_type;
   const items = mediaForTarget(ct, ctx.media);
   if (!items.length) throw new PublishError("No media to publish.");

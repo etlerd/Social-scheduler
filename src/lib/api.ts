@@ -1,3 +1,4 @@
+import { gzipSync } from "node:zlib";
 import { denyUnlessAuthed } from "./auth";
 import { ApiError, errorMessage } from "./errors";
 
@@ -11,7 +12,7 @@ export function route<C>(fn: Handler<C>, opts: { auth?: boolean } = {}): Handler
       if (deny) return deny;
     }
     try {
-      return await fn(req, ctx);
+      return await compress(req, await fn(req, ctx));
     } catch (e) {
       if (e instanceof ApiError) {
         return Response.json({ error: e.message, details: e.details }, { status: e.status });
@@ -28,4 +29,18 @@ export async function readJson<T>(req: Request): Promise<T> {
   } catch {
     throw new ApiError(400, "Invalid JSON body");
   }
+}
+
+/** Next compresses pages but not route-handler JSON; lists of posts shrink ~10x with gzip. */
+async function compress(req: Request, res: Response): Promise<Response> {
+  if (!/\bgzip\b/.test(req.headers.get("accept-encoding") || "")) return res;
+  if (!(res.headers.get("content-type") || "").includes("application/json") || res.headers.has("content-encoding")) return res;
+  const body = Buffer.from(await res.arrayBuffer());
+  const headers = new Headers(res.headers);
+  headers.append("Vary", "Accept-Encoding");
+  if (body.length < 1024) return new Response(body, { status: res.status, headers });
+  const gz = gzipSync(body, { level: 6 });
+  headers.set("Content-Encoding", "gzip");
+  headers.set("Content-Length", String(gz.length));
+  return new Response(gz, { status: res.status, headers });
 }

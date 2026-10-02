@@ -42,6 +42,15 @@ export function StatusBadge({ status }: { status: PostStatus | TargetStatus }) {
 }
 
 export function MediaThumb({ media, className = "", showMeta = true }: { media: MediaItem; className?: string; showMeta?: boolean }) {
+  if (media.purged && media.thumbUrl) {
+    return (
+      <div className={`relative overflow-hidden bg-surface-2 ${className}`} title="Original deleted after publishing">
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src={media.thumbUrl} alt={media.originalName} loading="lazy" decoding="async" className="w-full h-full object-cover opacity-80" />
+        {showMeta && <span className="absolute left-1 bottom-1 chip h-5 px-1.5 bg-black/60 text-white text-[10px]">Published</span>}
+      </div>
+    );
+  }
   if (media.purged) {
     return (
       <div className={`grid place-items-center bg-surface-2 text-muted text-[11px] leading-tight text-center p-2 ${className}`} title={media.originalName}>
@@ -51,9 +60,12 @@ export function MediaThumb({ media, className = "", showMeta = true }: { media: 
   }
   return (
     <div className={`relative overflow-hidden bg-surface-2 ${className}`}>
-      {media.kind === "image" ? (
+      {media.thumbUrl ? (
         // eslint-disable-next-line @next/next/no-img-element
-        <img src={media.url} alt={media.originalName} loading="lazy" className="w-full h-full object-cover" />
+        <img src={media.thumbUrl} alt={media.originalName} loading="lazy" decoding="async" className="w-full h-full object-cover" />
+      ) : media.kind === "image" ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img src={media.url} alt={media.originalName} loading="lazy" decoding="async" className="w-full h-full object-cover" />
       ) : (
         <video src={`${media.url}#t=0.1`} preload="metadata" muted playsInline className="w-full h-full object-cover" />
       )}
